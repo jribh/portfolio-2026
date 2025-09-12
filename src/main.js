@@ -4,7 +4,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 
 import { EffectComposer, RenderPass, EffectPass, SelectiveBloomEffect, SMAAEffect, SMAAPreset, HueSaturationEffect, BrightnessContrastEffect , Effect } from 'postprocessing';
-import { reededParams, createReededPass, setReededResolution, tickReededTime, updateReeded as _updateReeded, createGrainPass, updateGrain, setReededDepth, setReededScrollProgress, setReededScrollRefractionMultiplier, setReededSplitScreenMode, createBottomVignettePass, setBottomVignetteResolution, updateBottomVignette } from './effects/OverlayEffects.js';
+import { reededParams, createReededPass, setReededResolution, tickReededTime, updateReeded as _updateReeded, createGrainPass, updateGrain, setGrainEffectivePixelRatio, setReededDepth, setReededScrollProgress, setReededScrollRefractionMultiplier, setReededSplitScreenMode, createBottomVignettePass, setBottomVignetteResolution, updateBottomVignette } from './effects/OverlayEffects.js';
 import { gsap } from 'gsap';
 
 import hdriUrl from './assets/hdri_bg.hdr';
@@ -1066,6 +1066,7 @@ function _applyRendererPixelRatio(){
   const epr = pr; // effective pixel ratio used
   resizeRendererAndComposer._epr = pr;
   if (_vignetteEffect) setBottomVignetteResolution(_vignetteEffect, Math.floor(_lastCSSW * epr), Math.floor(_lastCSSH * epr));
+  if (typeof setGrainEffectivePixelRatio === 'function') setGrainEffectivePixelRatio(grainEffect, epr);
   applyEffectQuality();
   // Pixel budget check (in case baseCapCurrent changed before this call)
   if (typeof enforcePixelBudget === 'function') enforcePixelBudget();
@@ -1225,6 +1226,7 @@ function handleResize() {
   resizeRendererAndComposer(renderer, composer, vw, vh);
   if (_reedEffect) setReededResolution(_reedEffect, vw, vh);
   if (_vignetteEffect) setBottomVignetteResolution(_vignetteEffect, Math.floor(vw * (resizeRendererAndComposer._epr || 1)), Math.floor(vh * (resizeRendererAndComposer._epr || 1)));
+  if (typeof setGrainEffectivePixelRatio === 'function') setGrainEffectivePixelRatio(grainEffect, resizeRendererAndComposer._epr || 1);
   // Resize depth RT if present
   if (animate._depthRT) animate._depthRT.setSize(vw, vh);
     // Fit gradient background to the frustum

@@ -534,13 +534,25 @@ export const grainParams = {
 };
 
 const grainFrag = /* glsl */ `
-uniform float opacity;
-float random(vec2 uv) {
-  return fract(sin(dot(uv.xy ,vec2(12.9898,78.233))) * 43758.5453);
+uniform float opacity;   // blend strength
+uniform float invEpr;    // 1.0 / effective pixel ratio (CSS px per framebuffer px)
+
+// Hash-based noise; stable and inexpensive
+float hash21(vec2 p){
+  p = fract(p * vec2(123.34, 345.45));
+  p += dot(p, p + 34.345);
+  return fract(p.x * p.y);
 }
+
 void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
-  float g = random(uv);
+  // Convert framebuffer coordinates to CSS-pixel space so grain density is constant across DPR changes
+  vec2 cssPx = gl_FragCoord.xy * invEpr;
+
+  // Continuous hash on CSS pixels gives resolution-independent grain density
+  float g = hash21(cssPx);
   vec3 gv = vec3(g);
+
+  // Screen blend style overlay, modulated by opacity
   vec3 mask = step(gv, vec3(0.5));
   vec3 overlay = mix(
     2.0 * inputColor.rgb * gv,
@@ -555,7 +567,8 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor)
 export function createGrainPass(camera){
   const effect = new Effect('ProceduralGrainEffect', grainFrag, {
     uniforms: new Map([
-      ['opacity', new THREE.Uniform(grainParams.opacity)]
+  ['opacity', new THREE.Uniform(grainParams.opacity)],
+  ['invEpr',  new THREE.Uniform(1.0)]
     ])
   });
   const pass = new EffectPass(camera, effect);
@@ -565,6 +578,14 @@ export function createGrainPass(camera){
 export function updateGrain(effect, partial){
   Object.assign(grainParams, partial || {});
   if (effect) effect.uniforms.get('opacity').value = grainParams.opacity;
+}
+
+// Keep grain density constant per CSS pixel by informing the shader of the effective pixel ratio
+export function setGrainEffectivePixelRatio(effect, epr){
+  if (!effect) return;
+  const u = effect.uniforms;
+  const uni = u && u.get('invEpr');
+  if (uni) uni.value = 1.0 / Math.max(epr || 1.0, 1e-6);
 }
 
 // ---------------- Bottom Vignette (screen-space fade at bottom edge) ----------------
