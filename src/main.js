@@ -1041,17 +1041,8 @@ let _lastCSSW = window.innerWidth; let _lastCSSH = window.innerHeight;
 function applyEffectQuality(){
   const tier = EFFECT_QUALITY_LEVELS[_effectQualityLevel];
   if (!tier) return;
-  // SelectiveBloomEffect internal resolution (if API exists)
-  try {
-    if (bloomEffect) {
-      if (bloomEffect.resolution && typeof bloomEffect.resolution.setBaseSize === 'function') {
-        bloomEffect.resolution.setBaseSize(Math.floor(_lastCSSW * tier.bloomScale), Math.floor(_lastCSSH * tier.bloomScale));
-      } else if ('resolutionScale' in bloomEffect) {
-        bloomEffect.resolutionScale = tier.bloomScale; // fallback property (some versions)
-      }
-    }
-  } catch(e){ /* silent */ }
-  // Reeded effect scaling via resolution override helper
+  // Do NOT change bloom in real time – it's perceptible. Keep bloom at its initial resolution.
+  // Only adjust reeded internal resolution subtly.
   try {
     if (_reedEffect && typeof setReededResolution === 'function') {
       setReededResolution(_reedEffect, Math.floor(_lastCSSW * tier.reededScale), Math.floor(_lastCSSH * tier.reededScale));
