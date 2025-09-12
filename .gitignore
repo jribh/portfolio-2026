@@ -1,0 +1,29 @@
+# --------------------------
+# Node.js / Parcel
+# --------------------------
+node_modules/
+dist/
+.parcel-cache/
+.cache/
+
+# --------------------------
+# OS / Editor junk
+# --------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.cursor/
+
+# --------------------------
+# Logs
+# --------------------------
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --------------------------
+# Environment / secrets (if any in future)
+# --------------------------
+.env
+*.local

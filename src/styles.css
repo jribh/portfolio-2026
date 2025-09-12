@@ -1,0 +1,167 @@
+body {
+    overflow-x: hidden !important;
+    overflow-y: auto;
+    margin:0;
+    padding:0;
+    background-color: #060607;
+    font-size: 14px;
+    scroll-behavior: smooth;
+    scroll-snap-type: y mandatory;
+    /* background: rgb(2,0,36); */
+}
+
+@media (max-width:600px) {
+    body {
+        font-size:12px;
+    }
+}
+@media (min-width:600px) {
+    body {
+        font-size:12px;
+    }
+}
+@media (min-width:1000px) {
+    body {
+        font-size:12px;
+    }
+}
+@media (min-width:1350px) {
+    body {
+        font-size:14px;
+    }
+}
+@media (min-width:1700px) {
+    body {
+        font-size:16px;
+    }
+}
+@media (min-width:1850px) {
+    body {
+        font-size:18px;
+    }
+}
+@media (min-width:2000px) {
+    body {
+        font-size:22px;
+    }
+}
+
+body::-webkit-scrollbar {
+    width: 0.8em;               /* width of the entire scrollbar */
+}
+  
+body::-webkit-scrollbar-track {
+    background: #1A1631;        /* color of the tracking area */
+}
+  
+body::-webkit-scrollbar-thumb {
+    border-radius: 2px;
+    border:0.2em solid #1A1631;
+    background: rgba(67, 61, 105, 0.5);
+}
+
+body::-webkit-scrollbar-thumb:hover {
+    background: rgba(67, 61, 105, 0.8);
+}
+
+body::-webkit-scrollbar-thumb:active {
+    background: rgba(67, 61, 105, 1);
+}
+
+#artboard {
+    z-index:10;
+    position:absolute;
+    top:0;
+    pointer-events: none;
+    opacity: 0;                 /* ensure no initial pop before JS runs */
+    transition: opacity 900ms cubic-bezier(.4,0,.2,1);
+    will-change: opacity;
+}
+
+#backgrounds {
+    -webkit-animation: fadein 2.5s;
+    -moz-animation: fadein 2.5s;
+    animation: fadein 2.5s;
+}
+
+#head-background{
+    position: fixed; inset: 0; z-index: 2;
+    width: 100vw; height: 100vh;
+    opacity: 0.75;
+  
+    /* animated vars (positions %, radii %) */
+    --g2x:50%; --g2y:75%; --g2r:35%;
+    --g3x:20%; --g3y:30%; --g3r:50%;
+    --g4x:80%; --g4y:25%; --g4r:50%;
+    --g5x:30%; --g5y:85%; --g5r:40%;
+    --g6x:70%; --g6y:85%; --g6r:45%;
+    --g7x:70%; --g7y:50%; --g7r:50%;
+  
+    background:
+        radial-gradient(circle at top, #171c42, #000000),
+
+        /* Red bottom center */
+        radial-gradient(circle at var(--g2x) var(--g2y), #ff1e0a38 0%, transparent var(--g2r)),
+
+        /* Cyan TR */
+        radial-gradient(circle at var(--g4x) var(--g4y), rgba(123, 226, 255, 0.04) 0%, transparent var(--g4r));
+    
+        background-blend-mode: screen;
+  }
+
+#content {
+    position: relative;
+    z-index: 5;
+    color: white;
+    font-family: 'Montserrat', sans-serif;
+}
+
+.content-section {
+    height: 100vh;
+    padding: 4rem 2rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    background: rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(5px);
+    scroll-snap-align: start;
+}
+
+.content-section:first-child {
+    margin-top: 0; /* First section starts immediately */
+}
+
+.content-section h1 {
+    font-size: 3rem;
+    font-weight: 300;
+    margin-bottom: 2rem;
+    color: #ffffff;
+}
+
+.content-section h2 {
+    font-size: 2.5rem;
+    font-weight: 400;
+    margin-bottom: 2rem;
+    color: #cccccc;
+}
+
+.content-section p {
+    font-size: 1.2rem;
+    line-height: 1.6;
+    color: #aaaaaa;
+    max-width: 800px;
+    margin-bottom: 1rem;
+}
+
+#head-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 10;
+    pointer-events: none;
+}
+  
