@@ -4,7 +4,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 
 import { EffectComposer, RenderPass, EffectPass, SelectiveBloomEffect, SMAAEffect, SMAAPreset, HueSaturationEffect, BrightnessContrastEffect , Effect } from 'postprocessing';
-import { reededParams, createReededPass, setReededResolution, tickReededTime, updateReeded as _updateReeded, createGrainPass, updateGrain, setGrainEffectivePixelRatio, setReededDepth, setReededScrollProgress, setReededScrollRefractionMultiplier, setReededSplitScreenMode, createBottomVignettePass, setBottomVignetteResolution, updateBottomVignette } from './effects/OverlayEffects.js';
+import { reededParams, createReededPass, setReededResolution, tickReededTime, updateReeded as _updateReeded, createGrainPass, updateGrain, setReededDepth, setReededScrollProgress, setReededScrollRefractionMultiplier, setReededSplitScreenMode, createBottomVignettePass, setBottomVignetteResolution, updateBottomVignette } from './effects/OverlayEffects.js';
 import { gsap } from 'gsap';
 
 import hdriUrl from './assets/hdri_bg.hdr';
@@ -1039,6 +1039,29 @@ let _highPerfAccum = 0;
 // Track canvas CSS size for re-applying on DPR changes without layout jumps
 let _lastCSSW = window.innerWidth; let _lastCSSH = window.innerHeight;
 
+// Resume/settling guard state
+let _resumeGuardUntil = 0;           // time until which downscales are forbidden
+let _resumeIgnoreFrames = 0;         // number of frames to ignore in EMA/scaler
+let _postResumeDebounceUntil = 0;    // additional debounce window after guard
+
+function _triggerResumeGuard(){
+  const now = performance.now();
+  _resumeGuardUntil = now + 4500;         // forbid downscales ~4.5s
+  _resumeIgnoreFrames = 60;               // ignore first ~60 frames
+  _postResumeDebounceUntil = now + 7000;  // extra debounce for a bit after
+  // Reset EMA and accumulators
+  _emaFrameTime = 1/60;
+  _lowPerfAccum = 0; _highPerfAccum = 0;
+  _lastPerfChangeTime = now; // also pushes next allowed change
+}
+
+// Hook resume-like events
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') _triggerResumeGuard();
+}, { passive: true });
+window.addEventListener('focus', _triggerResumeGuard, { passive: true });
+window.addEventListener('pageshow', _triggerResumeGuard, { passive: true });
+
 function applyEffectQuality(){
   const tier = EFFECT_QUALITY_LEVELS[_effectQualityLevel];
   if (!tier) return;
@@ -1066,7 +1089,6 @@ function _applyRendererPixelRatio(){
   const epr = pr; // effective pixel ratio used
   resizeRendererAndComposer._epr = pr;
   if (_vignetteEffect) setBottomVignetteResolution(_vignetteEffect, Math.floor(_lastCSSW * epr), Math.floor(_lastCSSH * epr));
-  if (typeof setGrainEffectivePixelRatio === 'function') setGrainEffectivePixelRatio(grainEffect, epr);
   applyEffectQuality();
   // Pixel budget check (in case baseCapCurrent changed before this call)
   if (typeof enforcePixelBudget === 'function') enforcePixelBudget();
@@ -1077,8 +1099,13 @@ function computeEffectivePixelRatio(){
   return currentTargetPixelRatio();
 }
 
+function _effectiveDebounceMs(now){
+  return PERF_CHANGE_DEBOUNCE + (now < _postResumeDebounceUntil ? 700 : 0);
+}
+
 function attemptDegrade(now){
-  if (now - _lastPerfChangeTime < PERF_CHANGE_DEBOUNCE) return;
+  if (now < _resumeGuardUntil) return; // downscales forbidden during guard
+  if (now - _lastPerfChangeTime < _effectiveDebounceMs(now)) return;
   // First try effect quality
   if (_effectQualityLevel < EFFECT_QUALITY_LEVELS.length - 1){
     _effectQualityLevel++;
@@ -1115,7 +1142,7 @@ function enforcePixelBudget(){
 }
 
 function attemptUpgrade(now){
-  if (now - _lastPerfChangeTime < PERF_CHANGE_DEBOUNCE) return;
+  if (now - _lastPerfChangeTime < _effectiveDebounceMs(now)) return;
   // Prefer restoring DPR first (visual crispness) if we've lowered it
   if (_dprBucketIndex > 0){
     _dprBucketIndex--;
@@ -1146,6 +1173,17 @@ function perfAdaptiveUpdate(delta){
   const now = performance.now();
   const alpha = 1 - Math.exp(-delta / EMA_WINDOW_SECONDS); // continuous-time EMA
   const frameTime = delta; // seconds
+  // Ignore the first ~N frames after resume: keep EMA stable and skip actions
+  if (_resumeIgnoreFrames > 0){
+    _resumeIgnoreFrames--;
+    // keep EMA as-is; also keep debug updated
+    if (window.__perfDebug){
+      window.__perfDebug.resumeGuardMs = Math.max(0, _resumeGuardUntil - now);
+      window.__perfDebug.ignoreFrames = _resumeIgnoreFrames;
+    }
+    return;
+  }
+
   _emaFrameTime = _emaFrameTime + alpha * (frameTime - _emaFrameTime);
   const emaFPS = 1 / _emaFrameTime;
 
@@ -1174,6 +1212,8 @@ function perfAdaptiveUpdate(delta){
     window.__perfDebug.bucket = DPR_BUCKETS[_dprBucketIndex];
     window.__perfDebug.effectTier = EFFECT_QUALITY_LEVELS[_effectQualityLevel].name;
   window.__perfDebug.baseCapCurrent = __deviceProfile.baseCapCurrent;
+  window.__perfDebug.resumeGuardMs = Math.max(0, _resumeGuardUntil - now);
+  window.__perfDebug.ignoreFrames = _resumeIgnoreFrames;
   }
 }
 
@@ -1226,7 +1266,6 @@ function handleResize() {
   resizeRendererAndComposer(renderer, composer, vw, vh);
   if (_reedEffect) setReededResolution(_reedEffect, vw, vh);
   if (_vignetteEffect) setBottomVignetteResolution(_vignetteEffect, Math.floor(vw * (resizeRendererAndComposer._epr || 1)), Math.floor(vh * (resizeRendererAndComposer._epr || 1)));
-  if (typeof setGrainEffectivePixelRatio === 'function') setGrainEffectivePixelRatio(grainEffect, resizeRendererAndComposer._epr || 1);
   // Resize depth RT if present
   if (animate._depthRT) animate._depthRT.setSize(vw, vh);
     // Fit gradient background to the frustum
