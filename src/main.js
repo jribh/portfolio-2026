@@ -1008,7 +1008,8 @@ function detectDeviceProfile(){
 const __deviceProfile = detectDeviceProfile();
 
 // Quantized DPR buckets (multipliers applied to baseCap) – descending order
-const DPR_BUCKETS = [1.0, 0.9, 0.8, 0.7, 0.6];
+// Removed the lowest bucket to avoid overly soft image on phones
+const DPR_BUCKETS = [1.0, 0.9, 0.8, 0.7];
 let _dprBucketIndex = 0; // start at full quality of current baseCapCurrent
 
 // Effect quality tiers prioritizing subtle internal resolution drops before DPR buckets
@@ -1022,10 +1023,10 @@ const EFFECT_QUALITY_LEVELS = [
 let _effectQualityLevel = 0;
 
 // Performance adaptation thresholds
-const PERF_FPS_DROP_THRESHOLD = 58;        // trigger lowering when sustained below
-const PERF_FPS_RAISE_THRESHOLD = 60;       // must be at/above this to consider raising
-const PERF_DEGRADE_MIN_DURATION = 1000;    // ms of continuous low perf before degrading
-const PERF_UPGRADE_MIN_DURATION = 5000;    // ms of sustained high perf before upgrading (slightly longer for desktops)
+const PERF_FPS_DROP_THRESHOLD = 50;        // trigger lowering when sustained below
+const PERF_FPS_RAISE_THRESHOLD = 52;       // must be at/above this to consider raising
+const PERF_DEGRADE_MIN_DURATION = 2000;    // ms of continuous low perf before degrading
+const PERF_UPGRADE_MIN_DURATION = 3000;    // ms of sustained high perf before upgrading
 const PERF_CHANGE_DEBOUNCE = 1300;         // ms between any two changes
 
 // EMA smoothing (~1s window). We'll derive alpha dynamically per frame.
@@ -1081,16 +1082,16 @@ function attemptDegrade(now){
   if (_effectQualityLevel < EFFECT_QUALITY_LEVELS.length - 1){
     _effectQualityLevel++;
     applyEffectQuality();
-    _lastPerfChangeTime = now;
-    window.__perfDebug && console.log('[Perf] Degraded effect tier ->', EFFECT_QUALITY_LEVELS[_effectQualityLevel].name);
+  _lastPerfChangeTime = now;
+  window.__perfDebug && console.log('[Perf] Degraded effect tier ->', EFFECT_QUALITY_LEVELS[_effectQualityLevel].name);
     return;
   }
   // Then drop DPR bucket (if possible)
   if (_dprBucketIndex < DPR_BUCKETS.length - 1){
     _dprBucketIndex++;
     _applyRendererPixelRatio();
-    _lastPerfChangeTime = now;
-    window.__perfDebug && console.log('[Perf] Dropped DPR bucket ->', DPR_BUCKETS[_dprBucketIndex]);
+  _lastPerfChangeTime = now;
+  window.__perfDebug && console.log('[Perf] Dropped DPR bucket ->', DPR_BUCKETS[_dprBucketIndex]);
   }
 }
 
@@ -1118,24 +1119,24 @@ function attemptUpgrade(now){
   if (_dprBucketIndex > 0){
     _dprBucketIndex--;
     _applyRendererPixelRatio();
-    _lastPerfChangeTime = now;
-    window.__perfDebug && console.log('[Perf] Raised DPR bucket ->', DPR_BUCKETS[_dprBucketIndex]);
+  _lastPerfChangeTime = now;
+  window.__perfDebug && console.log('[Perf] Raised DPR bucket ->', DPR_BUCKETS[_dprBucketIndex]);
     return;
   }
   // Then restore effect quality
   if (_effectQualityLevel > 0){
     _effectQualityLevel--;
     applyEffectQuality();
-    _lastPerfChangeTime = now;
-    window.__perfDebug && console.log('[Perf] Upgraded effect tier ->', EFFECT_QUALITY_LEVELS[_effectQualityLevel].name);
+  _lastPerfChangeTime = now;
+  window.__perfDebug && console.log('[Perf] Upgraded effect tier ->', EFFECT_QUALITY_LEVELS[_effectQualityLevel].name);
     return;
   }
   // Finally, if everything is maxed and we are still very healthy, allow raising baseCapCurrent slightly (for desktops only)
   if (__deviceProfile.category === 'desktop' && __deviceProfile.baseCapCurrent < __deviceProfile.baseCapMax){
     __deviceProfile.baseCapCurrent = Math.min(__deviceProfile.baseCapMax, __deviceProfile.baseCapCurrent + 0.1);
     _applyRendererPixelRatio();
-    _lastPerfChangeTime = now;
-    window.__perfDebug && console.log('[Perf] Increased desktop baseCapCurrent ->', __deviceProfile.baseCapCurrent.toFixed(2));
+  _lastPerfChangeTime = now;
+  window.__perfDebug && console.log('[Perf] Increased desktop baseCapCurrent ->', __deviceProfile.baseCapCurrent.toFixed(2));
   }
 }
 
@@ -1147,8 +1148,6 @@ function perfAdaptiveUpdate(delta){
   _emaFrameTime = _emaFrameTime + alpha * (frameTime - _emaFrameTime);
   const emaFPS = 1 / _emaFrameTime;
 
-  const inactive = (Date.now() - lastMouseMoveTime) > 2000; // low interaction gate for upgrades
-
   if (emaFPS < PERF_FPS_DROP_THRESHOLD){
     _lowPerfAccum += delta * 1000; // ms
     _highPerfAccum = 0;
@@ -1159,7 +1158,7 @@ function perfAdaptiveUpdate(delta){
   } else if (emaFPS >= PERF_FPS_RAISE_THRESHOLD){
     _highPerfAccum += delta * 1000; // ms
     _lowPerfAccum = 0;
-    if (_highPerfAccum >= PERF_UPGRADE_MIN_DURATION && inactive){
+  if (_highPerfAccum >= PERF_UPGRADE_MIN_DURATION){
       attemptUpgrade(now);
       _highPerfAccum = 0;
     }
@@ -1176,6 +1175,8 @@ function perfAdaptiveUpdate(delta){
   window.__perfDebug.baseCapCurrent = __deviceProfile.baseCapCurrent;
   }
 }
+
+// Removed grain pulse smoother per request
 
 // Expose debug controls
 window.__perfDebug = {
