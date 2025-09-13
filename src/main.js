@@ -1023,10 +1023,10 @@ const EFFECT_QUALITY_LEVELS = [
 let _effectQualityLevel = 0;
 
 // Performance adaptation thresholds
-const PERF_FPS_DROP_THRESHOLD = 50;        // trigger lowering when sustained below
-const PERF_FPS_RAISE_THRESHOLD = 52;       // must be at/above this to consider raising
-const PERF_DEGRADE_MIN_DURATION = 2000;    // ms of continuous low perf before degrading
-const PERF_UPGRADE_MIN_DURATION = 3000;    // ms of sustained high perf before upgrading
+const PERF_FPS_DROP_THRESHOLD = 58;        // trigger lowering when sustained below
+const PERF_FPS_RAISE_THRESHOLD = 60;       // must be at/above this to consider raising
+const PERF_DEGRADE_MIN_DURATION = 4000;    // ms of continuous low perf before degrading
+const PERF_UPGRADE_MIN_DURATION = 6000;    // ms of sustained high perf before upgrading
 const PERF_CHANGE_DEBOUNCE = 1300;         // ms between any two changes
 
 // EMA smoothing (~1s window). We'll derive alpha dynamically per frame.
@@ -1035,6 +1035,7 @@ let _emaFrameTime = 1/60; // start optimistic
 let _lastPerfChangeTime = performance.now();
 let _lowPerfAccum = 0;
 let _highPerfAccum = 0;
+let _lastEmaFPS = 60;
 
 // Track canvas CSS size for re-applying on DPR changes without layout jumps
 let _lastCSSW = window.innerWidth; let _lastCSSH = window.innerHeight;
@@ -1108,18 +1109,24 @@ function attemptDegrade(now){
   if (now - _lastPerfChangeTime < _effectiveDebounceMs(now)) return;
   // First try effect quality
   if (_effectQualityLevel < EFFECT_QUALITY_LEVELS.length - 1){
+    const prevTier = EFFECT_QUALITY_LEVELS[_effectQualityLevel].name;
     _effectQualityLevel++;
+    const newTier = EFFECT_QUALITY_LEVELS[_effectQualityLevel].name;
     applyEffectQuality();
   _lastPerfChangeTime = now;
-  window.__perfDebug && console.log('[Perf] Degraded effect tier ->', EFFECT_QUALITY_LEVELS[_effectQualityLevel].name);
+  window.__perfDebug && console.log('[Perf] Degraded effect tier ->', newTier);
+  if (typeof _logChange === 'function') _logChange('Tier ↓', prevTier, newTier, `EMA ${_lastEmaFPS.toFixed(1)} < ${PERF_FPS_DROP_THRESHOLD} for ${PERF_DEGRADE_MIN_DURATION}ms`);
     return;
   }
   // Then drop DPR bucket (if possible)
   if (_dprBucketIndex < DPR_BUCKETS.length - 1){
+    const prevB = DPR_BUCKETS[_dprBucketIndex];
     _dprBucketIndex++;
+    const newB = DPR_BUCKETS[_dprBucketIndex];
     _applyRendererPixelRatio();
   _lastPerfChangeTime = now;
-  window.__perfDebug && console.log('[Perf] Dropped DPR bucket ->', DPR_BUCKETS[_dprBucketIndex]);
+  window.__perfDebug && console.log('[Perf] Dropped DPR bucket ->', newB);
+  if (typeof _logChange === 'function') _logChange('Bucket ↓', String(prevB), String(newB), `EMA ${_lastEmaFPS.toFixed(1)} < ${PERF_FPS_DROP_THRESHOLD} for ${PERF_DEGRADE_MIN_DURATION}ms`);
   }
 }
 
@@ -1138,6 +1145,7 @@ function enforcePixelBudget(){
   if (changed) {
     _applyRendererPixelRatio();
     window.__perfDebug && console.log('[Perf] Enforced pixel budget, DPR bucket now', DPR_BUCKETS[_dprBucketIndex]);
+    if (typeof _logChange === 'function') _logChange('Budget', '-', String(DPR_BUCKETS[_dprBucketIndex]), `>${(PIXEL_BUDGET/1e6).toFixed(1)} MP framebuffer`);
   }
 }
 
@@ -1145,26 +1153,34 @@ function attemptUpgrade(now){
   if (now - _lastPerfChangeTime < _effectiveDebounceMs(now)) return;
   // Prefer restoring DPR first (visual crispness) if we've lowered it
   if (_dprBucketIndex > 0){
+    const prevB = DPR_BUCKETS[_dprBucketIndex];
     _dprBucketIndex--;
+    const newB = DPR_BUCKETS[_dprBucketIndex];
     _applyRendererPixelRatio();
   _lastPerfChangeTime = now;
-  window.__perfDebug && console.log('[Perf] Raised DPR bucket ->', DPR_BUCKETS[_dprBucketIndex]);
+  window.__perfDebug && console.log('[Perf] Raised DPR bucket ->', newB);
+    if (typeof _logChange === 'function') _logChange('Bucket ↑', String(prevB), String(newB), `EMA ${_lastEmaFPS.toFixed(1)} ≥ ${PERF_FPS_RAISE_THRESHOLD} for ${PERF_UPGRADE_MIN_DURATION}ms`);
     return;
   }
   // Then restore effect quality
   if (_effectQualityLevel > 0){
+    const prevTier = EFFECT_QUALITY_LEVELS[_effectQualityLevel].name;
     _effectQualityLevel--;
+    const newTier = EFFECT_QUALITY_LEVELS[_effectQualityLevel].name;
     applyEffectQuality();
   _lastPerfChangeTime = now;
-  window.__perfDebug && console.log('[Perf] Upgraded effect tier ->', EFFECT_QUALITY_LEVELS[_effectQualityLevel].name);
+  window.__perfDebug && console.log('[Perf] Upgraded effect tier ->', newTier);
+    if (typeof _logChange === 'function') _logChange('Tier ↑', prevTier, newTier, `EMA ${(_lastEmaFPS).toFixed(1)} ≥ ${PERF_FPS_RAISE_THRESHOLD} for ${PERF_UPGRADE_MIN_DURATION}ms`);
     return;
   }
   // Finally, if everything is maxed and we are still very healthy, allow raising baseCapCurrent slightly (for desktops only)
   if (__deviceProfile.category === 'desktop' && __deviceProfile.baseCapCurrent < __deviceProfile.baseCapMax){
+    const prev = __deviceProfile.baseCapCurrent;
     __deviceProfile.baseCapCurrent = Math.min(__deviceProfile.baseCapMax, __deviceProfile.baseCapCurrent + 0.1);
     _applyRendererPixelRatio();
   _lastPerfChangeTime = now;
   window.__perfDebug && console.log('[Perf] Increased desktop baseCapCurrent ->', __deviceProfile.baseCapCurrent.toFixed(2));
+  if (typeof _logChange === 'function') _logChange('Desktop baseCap ↑', prev.toFixed(2), __deviceProfile.baseCapCurrent.toFixed(2), '');
   }
 }
 
@@ -1186,6 +1202,7 @@ function perfAdaptiveUpdate(delta){
 
   _emaFrameTime = _emaFrameTime + alpha * (frameTime - _emaFrameTime);
   const emaFPS = 1 / _emaFrameTime;
+  _lastEmaFPS = emaFPS;
 
   if (emaFPS < PERF_FPS_DROP_THRESHOLD){
     _lowPerfAccum += delta * 1000; // ms
@@ -1215,6 +1232,132 @@ function perfAdaptiveUpdate(delta){
   window.__perfDebug.resumeGuardMs = Math.max(0, _resumeGuardUntil - now);
   window.__perfDebug.ignoreFrames = _resumeIgnoreFrames;
   }
+  // Update HUD
+  _initPerfHUD();
+  _updatePerfHUD(150);
+}
+
+// -------------------- Lightweight Perf HUD --------------------
+let _perfHUD = null;
+let _perfHUDLastUpdate = 0;
+const _perfLog = [];
+
+function _initPerfHUD(){
+  if (_perfHUD) return;
+  // Inject stylesheet for responsive/collapsible HUD with color tags
+  const styleId = 'perf-hud-style';
+  if (!document.getElementById(styleId)){
+    const st = document.createElement('style');
+    st.id = styleId;
+    st.textContent = `
+      #perf-hud{position:fixed;top:8px;left:8px;z-index:10000;background:rgba(12,12,12,.72);color:#e8efff;border-radius:10px;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;backdrop-filter:saturate(1.15) blur(2px);box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:auto;max-width:80vw}
+      #perf-hud .hd{display:flex;align-items:center;gap:6px;font-weight:700;padding:8px 10px;cursor:pointer;user-select:none}
+      #perf-hud .bd{white-space:pre-wrap;padding:0 10px 8px 10px}
+      #perf-hud .lg{white-space:pre-wrap;margin:6px 0 8px 0;border-top:1px solid rgba(255,255,255,.08);padding:6px 10px 0 10px;max-height:140px;overflow:auto}
+      #perf-hud.collapsed .bd, #perf-hud.collapsed .lg{display:none}
+      #perf-hud .tag{display:inline-block;font-weight:700;padding:0 6px;border-radius:6px;color:#111}
+      #perf-hud .tag.up{background:#16c784}
+      #perf-hud .tag.down{background:#ff6b6b}
+      #perf-hud .tag.budget{background:#fbbf24}
+      #perf-hud .ts{opacity:.7}
+      @media (max-width:640px){
+        #perf-hud{top:6px;left:6px;border-radius:8px}
+        #perf-hud .hd{padding:6px 8px;font-size:11px}
+        #perf-hud .bd{padding:0 8px 6px 8px;font-size:11px}
+        #perf-hud .lg{padding:6px 8px 0 8px;max-height:100px;font-size:10px}
+      }
+    `;
+    document.head.appendChild(st);
+  }
+
+  const wrap = document.createElement('div');
+  wrap.id = 'perf-hud';
+  wrap.className = 'collapsed';
+
+  const head = document.createElement('div'); head.className='hd';
+  const caret = document.createElement('span'); caret.textContent='▸'; caret.style.opacity='.8';
+  const title = document.createElement('span'); title.textContent = 'Perf';
+  const mini = document.createElement('span'); mini.style.opacity='.85'; mini.style.fontWeight='600'; mini.style.marginLeft='4px'; mini.className='mini';
+  head.appendChild(caret); head.appendChild(title); head.appendChild(mini);
+
+  const body = document.createElement('div'); body.className='bd';
+  const log = document.createElement('div'); log.className='lg';
+  wrap.appendChild(head); wrap.appendChild(body); wrap.appendChild(log);
+  document.body.appendChild(wrap);
+  _perfHUD = { el: wrap, head, body, log, caret, mini };
+
+  // Toggle expand/collapse on click/tap
+  const toggle = ()=>{
+    const collapsed = wrap.classList.toggle('collapsed');
+    wrap.setAttribute('aria-expanded', String(!collapsed));
+    _updatePerfHUD(0);
+  };
+  head.addEventListener('click', toggle, {passive:true});
+  head.addEventListener('touchstart', (e)=>{ e.preventDefault(); toggle(); }, {passive:false});
+}
+
+function _describeQuality(){
+  const tier = EFFECT_QUALITY_LEVELS[_effectQualityLevel]?.name || 'ultra';
+  const bucket = DPR_BUCKETS[_dprBucketIndex] ?? 1.0;
+  const pr = currentTargetPixelRatio().toFixed(2);
+  return `FPS: ${_lastEmaFPS.toFixed(1)}\nTier: ${tier}  DPR: ${pr} (bucket ${bucket})`;
+}
+
+function _updatePerfHUD(throttleMs = 150){
+  const now = performance.now();
+  if (!_perfHUD || (now - _perfHUDLastUpdate) < throttleMs) return;
+  _perfHUDLastUpdate = now;
+  const collapsed = _perfHUD.el.classList.contains('collapsed');
+  // Header caret + compact line
+  _perfHUD.caret.textContent = collapsed ? '▸' : '▾';
+  const ema = (_lastEmaFPS && isFinite(_lastEmaFPS)) ? `${_lastEmaFPS.toFixed(0)}fps` : '';
+  const bucket = (typeof _dprBucketIndex==='number') ? `DPR ${DPR_BUCKETS[_dprBucketIndex]}` : '';
+  const tier = (typeof _effectQualityLevel==='number') ? EFFECT_QUALITY_LEVELS[_effectQualityLevel].name : '';
+  _perfHUD.mini.textContent = [ema, bucket, tier].filter(Boolean).join(' · ');
+
+  // Body and Log
+  _perfHUD.body.textContent = _describeQuality();
+  if (_perfLog.length){
+    const last = _perfLog.slice(-8);
+    const html = last.map(_renderPerfLogLine).join('');
+    _perfHUD.log.innerHTML = html;
+  }
+}
+
+function _logPerfEvent(msg){
+  const t = new Date();
+  const hh = String(t.getHours()).padStart(2,'0');
+  const mm = String(t.getMinutes()).padStart(2,'0');
+  const ss = String(t.getSeconds()).padStart(2,'0');
+  _perfLog.push(`${hh}:${mm}:${ss} ${msg}`);
+  _updatePerfHUD(0);
+}
+
+// Helper to format richer changes consistently
+function _logChange(kind, from, to, reason){
+  const t = new Date();
+  const hh = String(t.getHours()).padStart(2,'0');
+  const mm = String(t.getMinutes()).padStart(2,'0');
+  const ss = String(t.getSeconds()).padStart(2,'0');
+  _perfLog.push({ ts: `${hh}:${mm}:${ss}`, kind, from, to, reason });
+  _updatePerfHUD(0);
+}
+
+function _renderPerfLogLine(entry){
+  // Legacy string entries support
+  if (typeof entry === 'string'){
+    const safe = entry.replace(/[&<>]/g, s=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[s]));
+    return `<div>• ${safe}</div>`;
+  }
+  const {ts, kind, from, to, reason} = entry;
+  const isUp = kind.includes('↑');
+  const isDown = kind.includes('↓');
+  const cls = kind.startsWith('Budget') ? 'budget' : (isUp ? 'up' : (isDown ? 'down' : ''));
+  const base = kind.replace(' ↑','').replace(' ↓','');
+  const tag = `<span class="tag ${cls}">${base}${isUp?' ↑':isDown?' ↓':''}</span>`;
+  const parts = [ `<span class="ts">${ts}</span> — ${tag} ${from} → ${to}` ];
+  if (reason) parts.push(` — ${reason}`);
+  return `<div>${parts.join('')}</div>`;
 }
 
 // Removed grain pulse smoother per request
