@@ -93,64 +93,6 @@ renderer.physicallyCorrectLights = true;
 // Start dark
 renderer.toneMappingExposure = 0.0;
 
-// ------------------------------
-// Phone-only bottom fade overlay
-// ------------------------------
-let _bottomFadeEl = null;
-let _bottomFadeTopPx = null; // locked top position in CSS pixels (from viewport top)
-function _isPhonePortrait(){
-  const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
-  const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
-  return vh >= vw && vw < 450;
-}
-function _ensureBottomFadeEl(){
-  if (_bottomFadeEl) return _bottomFadeEl;
-  const el = document.createElement('div');
-  el.id = 'bottom-fade';
-  el.style.position = 'fixed';
-  el.style.left = '0';
-  el.style.right = '0';
-  el.style.bottom = '0';
-  el.style.height = '0px';
-  el.style.pointerEvents = 'none';
-  el.style.zIndex = '9998';
-  // Smooth fade to black from top (transparent) to bottom (solid)
-  el.style.background = 'linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.9) 45%, rgba(0,0,0,0) 100%)';
-  el.style.display = 'none';
-  document.body.appendChild(el);
-  _bottomFadeEl = el;
-  return el;
-}
-function _updateBottomFade(lockTopIfNeeded = true){
-  const isPhone = _isPhonePortrait();
-  if (!_bottomFadeEl && !isPhone) return; // nothing to do if hidden and not needed
-  const el = _ensureBottomFadeEl();
-  if (!isPhone){ el.style.display = 'none'; return; }
-  const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
-  const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
-  // Lock the top edge once (or when requested), then maintain it across vh changes
-  if ((_bottomFadeTopPx == null) && lockTopIfNeeded){
-    let targetHeight = Math.floor(vh * 0.24); // fallback ~24% of viewport
-    try {
-      if (GLTFHead && camera) {
-        const bbox = new THREE.Box3().setFromObject(GLTFHead);
-        const min = bbox.min.clone();
-        const center = bbox.getCenter(new THREE.Vector3());
-        const bottomWorld = new THREE.Vector3(center.x, min.y, center.z);
-        bottomWorld.project(camera);
-        const yPx = (1 - (bottomWorld.y + 1) / 2) * vh;
-        const margin = 16;
-        targetHeight = Math.max(0, Math.ceil(vh - yPx + margin));
-      }
-    } catch(e){ /* fallback */ }
-    _bottomFadeTopPx = Math.max(0, Math.min(vh, vh - targetHeight));
-  }
-  const lockedTop = (_bottomFadeTopPx == null) ? Math.floor(vh * 0.76) : _bottomFadeTopPx; // default to same ~24% height if not locked
-  const newHeight = Math.max(0, Math.ceil(vh - lockedTop));
-  el.style.height = `${newHeight}px`;
-  el.style.display = 'block';
-}
-
 // // This is for the bloom post processing
 const renderScene = new RenderPass(scene, camera)
 const composer = new EffectComposer(renderer)
@@ -176,6 +118,34 @@ let _vignettePass = null;
 // Fullscreen gradient background plane
 // ----------------------------------
 let _bgGrad = null;
+// Black bottom cover plane for portrait phones
+let _bottomCover = null;
+
+function ensureBottomCover(){
+  if (_bottomCover) return _bottomCover;
+  const geo = new THREE.PlaneGeometry(1, 1, 1, 1);
+  const mat = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'BottomCoverPlane';
+  mesh.renderOrder = -900; // after background (-1000), still behind most scene
+  mesh.position.z = -79;   // slightly in front of gradient background
+  mesh.visible = false;    // enabled only on portrait phones
+  scene.add(mesh);
+  _bottomCover = mesh;
+  return mesh;
+}
+
+function updateBottomCoverPlane(coverHeight){
+  const m = ensureBottomCover();
+  if (!coverHeight || coverHeight <= 0){ m.visible = false; return; }
+  // Fit to current camera frustum width and requested cover height, align to bottom
+  const fw = (camera.right - camera.left);
+  const fh = (camera.top - camera.bottom);
+  m.visible = true;
+  m.scale.set(fw, coverHeight, 1);
+  m.position.x = (camera.left + camera.right) * 0.5;
+  m.position.y = camera.bottom + coverHeight * 0.5;
+}
 
 function createGradientBackground() {
   if (_bgGrad) return;
@@ -1031,6 +1001,14 @@ function doBreathing() {
   if (typeof rightShoulder !== 'undefined' && rightShoulder && _baseRightShoulderY !== null) {
     rightShoulder.position.y = _baseRightShoulderY + shoulderOffset;
   }
+
+  // If head-follow is disabled (touch devices or head look not allowed),
+  // apply the chin breathing offset directly to the chin bone rotation.
+  if (chin && (IS_TOUCH_DEVICE || !allowHeadLook)) {
+    const baseX = Math.PI / 2;
+    chin.rotation.x = baseX + _chinBreathOffset;
+    // Keep Y/Z as-is; head-follow would normally manage those when enabled
+  }
 }
 
 const clock = new THREE.Clock();
@@ -1469,7 +1447,7 @@ function updateOrthoFrustum(cam, aspect) {
     if (isPhonePortrait) {
       // Phones (portrait): zoom out a bit more and nudge scene up
       size = frustumSize * 1.6;
-      heightOffset = frustumHeight - 10; // move scene up
+      heightOffset = frustumHeight - 11; // move scene up
     } else {
       // Tablets (portrait): zoom out a bit, keep height offset as-is
       size = frustumSize * 1.4;
@@ -1482,6 +1460,12 @@ function updateOrthoFrustum(cam, aspect) {
   cam.top    =  size + heightOffset;
   cam.bottom =  heightOffset;
   cam.updateProjectionMatrix();
+
+  // Update the bottom cover plane based on how much we shifted the scene up
+  // Cover height equals the vertical offset applied (frustumHeight - heightOffset).
+  // Make it 3x as tall while staying anchored to the bottom.
+  const coverHeight = Math.max(0, frustumHeight - heightOffset) * 3;
+  updateBottomCoverPlane(coverHeight);
 }
 
 function setCanvasCSSSize(canvas, w, h) {
@@ -1504,31 +1488,29 @@ function handleResize() {
     const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
     const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
 
-    if (theCanvas) setCanvasCSSSize(theCanvas, vw, vh);
+    // On portrait phones, oversize canvas height by ~15% to cover small viewport height increases
+    const isPortrait = vh >= vw;
+    const isPhonePortrait = isPortrait && vw < 450;
+    const cssH = isPhonePortrait ? Math.floor(vh * 1.15) : vh;
 
-    const aspect = vw / vh;
+    if (theCanvas) setCanvasCSSSize(theCanvas, vw, cssH);
+
+    const aspect = vw / cssH;
     updateOrthoFrustum(camera, aspect);
 
-  resizeRendererAndComposer(renderer, composer, vw, vh);
-  if (_reedEffect) setReededResolution(_reedEffect, vw, vh);
-  if (_vignetteEffect) setBottomVignetteResolution(_vignetteEffect, Math.floor(vw * (resizeRendererAndComposer._epr || 1)), Math.floor(vh * (resizeRendererAndComposer._epr || 1)));
+  resizeRendererAndComposer(renderer, composer, vw, cssH);
+  if (_reedEffect) setReededResolution(_reedEffect, vw, cssH);
+  if (_vignetteEffect) setBottomVignetteResolution(_vignetteEffect, Math.floor(vw * (resizeRendererAndComposer._epr || 1)), Math.floor(cssH * (resizeRendererAndComposer._epr || 1)));
   // Resize depth RT if present
-  if (animate._depthRT) animate._depthRT.setSize(vw, vh);
+  if (animate._depthRT) animate._depthRT.setSize(vw, cssH);
     // Fit gradient background to the frustum
     positionGradientBackgroundFromFrustum();
-  // Update bottom fade overlay sizing for phones
-  _updateBottomFade();
   });
 }
 
 if (IS_TOUCH_DEVICE) {
   // On touch devices: only handle orientation changes (avoid frequent viewport-height jitter resizes)
-  window.addEventListener('orientationchange', () => {
-    // Recompute full layout and re-lock fade top on orientation changes
-    _bottomFadeTopPx = null;
-    handleResize();
-    _updateBottomFade(true);
-  }, { passive: true });
+  window.addEventListener('orientationchange', handleResize, { passive: true });
 } else {
   // On non-touch: respond to full resize and visualViewport changes
   window.addEventListener('resize', handleResize, { passive: true });
@@ -1536,21 +1518,6 @@ if (IS_TOUCH_DEVICE) {
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', handleResize, { passive: true });
   }
-}
-
-// On touch devices, listen to visualViewport height changes to extend/shrink the fade height
-if (IS_TOUCH_DEVICE && window.visualViewport){
-  let _lastVVH = Math.floor(window.visualViewport.height);
-  window.visualViewport.addEventListener('resize', () => {
-    const vh = Math.floor(window.visualViewport.height);
-    if (!_bottomFadeEl) return;
-    if (_bottomFadeTopPx == null) return; // not locked yet
-    // Keep top fixed; just recompute height with new vh
-    const newHeight = Math.max(0, Math.ceil(vh - _bottomFadeTopPx));
-    _bottomFadeEl.style.height = `${newHeight}px`;
-    _bottomFadeEl.style.display = _isPhonePortrait() ? 'block' : 'none';
-    _lastVVH = vh;
-  }, { passive: true });
 }
 
 // Handle scroll to gradually apply reeded glass effect
@@ -1796,10 +1763,11 @@ composer.addPass(renderScene);
 composer.addPass(new EffectPass(camera, bloomEffect, hueSatEffect, brightnessContrastEffect, smaaEffect));
 
 // Bottom vignette: init and add before reeded glass so glass overlay is not faded
-if (!_isPhonePortrait()) {
+{
   const created = createBottomVignettePass(camera);
   _vignetteEffect = created.effect;
   _vignettePass = created.pass;
+  // Use framebuffer resolution (CSS px * effective pixel ratio) to match gl_FragCoord
   const epr = resizeRendererAndComposer._epr || computeEffectivePixelRatio();
   setBottomVignetteResolution(_vignetteEffect, Math.floor(window.innerWidth * epr), Math.floor(window.innerHeight * epr));
   composer.addPass(_vignettePass);
@@ -1823,8 +1791,6 @@ positionGradientBackgroundFromFrustum();
 // Apply initial DPR & quality (ensures correct sizing before first frame bursts heavy effects)
 _applyRendererPixelRatio();
 applyEffectQuality();
-// Initial phone overlay sizing
-_updateBottomFade();
 
 function animate() {
     const delta = clock.getDelta();
@@ -1989,7 +1955,4 @@ async function startStartupSequence(){
   _chinGain = 0;
   _chinStartMs = null;
   allowBreathing = true;
-  // Update phone overlay after startup settles camera/pose
-  _bottomFadeTopPx = null; // ensure we lock with final pose
-  _updateBottomFade(true);
 }
