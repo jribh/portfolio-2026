@@ -1023,8 +1023,8 @@ const EFFECT_QUALITY_LEVELS = [
 let _effectQualityLevel = 0;
 
 // Performance adaptation thresholds
-const PERF_FPS_DROP_THRESHOLD = 58;        // trigger lowering when sustained below
-const PERF_FPS_RAISE_THRESHOLD = 60;       // must be at/above this to consider raising
+const PERF_FPS_DROP_THRESHOLD = 55;        // trigger lowering when sustained below
+const PERF_FPS_RAISE_THRESHOLD = 70;       // must be at/above this to consider raising
 const PERF_DEGRADE_MIN_DURATION = 4000;    // ms of continuous low perf before degrading
 const PERF_UPGRADE_MIN_DURATION = 6000;    // ms of sustained high perf before upgrading
 const PERF_CHANGE_DEBOUNCE = 1300;         // ms between any two changes
