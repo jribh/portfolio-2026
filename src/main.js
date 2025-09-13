@@ -22,6 +22,16 @@ let allowBreathing = false; // both chin & shoulder breathing enabled together a
 const eyeMeshes = [];
 const initialChinLiftRad = -0.25; // slight look up during startup
 
+// Touch-device detection (phones/tablets)
+const IS_TOUCH_DEVICE = (function(){
+  try {
+    if (window.matchMedia && window.matchMedia('(pointer:coarse)').matches) return true;
+    if ('ontouchstart' in window) return true;
+    const ua = (navigator.userAgent || '').toLowerCase();
+    return /mobi|iphone|ipad|android|tablet/.test(ua);
+  } catch { return false; }
+})();
+
 const inactivityThreshold = 5000; // time before head moves back to position
 
 const WIND_BASE_TS = 1.0;
@@ -770,10 +780,12 @@ let _lastResizeMs = 0;             // timestamp of last resize event
 function _clamp01(v){ return Math.max(0, Math.min(1, v)); }
 function _easeInOutQuad(t){ t=_clamp01(t); return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2) / 2; }
 
-document.addEventListener('mousemove', (e) => {
-  lastMouseMoveTime = Date.now();
-  mousecoords = { x: e.clientX, y: e.clientY };
-}, { passive: true });
+if (!IS_TOUCH_DEVICE) {
+  document.addEventListener('mousemove', (e) => {
+    lastMouseMoveTime = Date.now();
+    mousecoords = { x: e.clientX, y: e.clientY };
+  }, { passive: true });
+}
 
 window.addEventListener('mouseleave', () => {
   mousecoords = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
@@ -825,7 +837,7 @@ function _headLookRAF() {
 
   if (typeof chin !== 'undefined' && chin) {
     // Choose head target: center if inactive/resizing, else cursor
-    const useCenter = inactive || resizing;
+    const useCenter = IS_TOUCH_DEVICE || inactive || resizing;
     let targetCoords = useCenter ? { x: window.innerWidth / 2, y: window.innerHeight / 2 } : mousecoords;
 
     // Ease the first movement after startup
@@ -846,6 +858,15 @@ function _headLookRAF() {
 
   doBreathing();
   requestAnimationFrame(_headLookRAF);
+}
+
+// Simple breathing-only loop for touch devices (no head follow)
+let _breathOnlyActive = false;
+function startBreathingOnly(){
+  if (_breathOnlyActive) return;
+  _breathOnlyActive = true;
+  const loop = () => { doBreathing(); requestAnimationFrame(loop); };
+  loop();
 }
 
 function moveJoint(mouse, joint, degreeLimit, dt, inactive, resizing, returnProgress) {
@@ -1374,10 +1395,34 @@ window.__perfDebug = {
 };
 
 function updateOrthoFrustum(cam, aspect) {
-  cam.left   = -frustumSize * aspect / 2;
-  cam.right  =  frustumSize * aspect / 2;
-  cam.top    =  frustumSize + frustumHeight;
-  cam.bottom =  frustumHeight;
+  // Base values
+  let size = frustumSize;
+  let heightOffset = frustumHeight;
+
+  // Orientation check
+  const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
+  const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
+  const isPortrait = vh >= vw;
+
+  // Device-responsive tweaks
+  if (isPortrait) {
+    // Breakpoints: Phones (portrait) if width < 450px, otherwise tablet
+    const isPhonePortrait = vw < 450;
+    if (isPhonePortrait) {
+      // Phones (portrait): zoom out a bit more and nudge scene up
+      size = frustumSize * 1.75;
+      heightOffset = frustumHeight - 10; // move scene up
+    } else {
+      // Tablets (portrait): zoom out a bit, keep height offset as-is
+      size = frustumSize * 1.4;
+      heightOffset = frustumHeight;
+    }
+  }
+
+  cam.left   = -size * aspect / 2;
+  cam.right  =  size * aspect / 2;
+  cam.top    =  size + heightOffset;
+  cam.bottom =  heightOffset;
   cam.updateProjectionMatrix();
 }
 
@@ -1393,6 +1438,10 @@ function resizeRendererAndComposer(renderer, composer, w, h) {
 }
 
 let resizeRAF = 0;
+// Track last viewport and orientation to suppress frustum updates on mobile height-only resizes
+let _lastVW = (window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth);
+let _lastVH = (window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight);
+let _lastPortrait = _lastVH >= _lastVW;
 function handleResize() {
   if (resizeRAF) return;
   resizeRAF = requestAnimationFrame(() => {
@@ -1400,11 +1449,20 @@ function handleResize() {
 
     const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
     const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
+    const isPortrait = vh >= vw;
+    const orientationChanged = isPortrait !== _lastPortrait;
+    const widthChanged = Math.abs(vw - _lastVW) > 1;
+    const heightChanged = Math.abs(vh - _lastVH) > 1;
 
     if (theCanvas) setCanvasCSSSize(theCanvas, vw, vh);
 
     const aspect = vw / vh;
-    updateOrthoFrustum(camera, aspect);
+    // On touch devices, avoid changing camera frustum on height-only viewport resizes
+    if (IS_TOUCH_DEVICE && !orientationChanged && !widthChanged && heightChanged) {
+      // Skip frustum update to prevent jank from mobile browser UI show/hide
+    } else {
+      updateOrthoFrustum(camera, aspect);
+    }
 
   resizeRendererAndComposer(renderer, composer, vw, vh);
   if (_reedEffect) setReededResolution(_reedEffect, vw, vh);
@@ -1413,6 +1471,9 @@ function handleResize() {
   if (animate._depthRT) animate._depthRT.setSize(vw, vh);
     // Fit gradient background to the frustum
     positionGradientBackgroundFromFrustum();
+
+    // Update last tracked values
+    _lastVW = vw; _lastVH = vh; _lastPortrait = isPortrait;
   });
 }
 
@@ -1844,8 +1905,14 @@ async function startStartupSequence(){
 
   // Enable head look 0.1s after startup ends, then start breathing
   await delay(10);
-  allowHeadLook = true;
-  if (chin) startHeadLook(chin);
+  if (!IS_TOUCH_DEVICE) {
+    allowHeadLook = true;
+    if (chin) startHeadLook(chin);
+  } else {
+    allowHeadLook = false;
+    // Keep head centered and run only breathing updates on touch devices
+    startBreathingOnly();
+  }
   _shoulderStartMs = Date.now();
   _chinBreathActive = false;
   _chinGain = 0;
