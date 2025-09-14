@@ -1588,7 +1588,7 @@ function handleResize() {
   const isPortrait = vh >= vw;
   const isPhone = vw < 600;
   const isTablet = vw >= 600 && vw <= 1100;
-  // Phones: grow downward (anchored top in CSS). Tablets: grow upward (anchored bottom in CSS).
+  // Phones: grow upward (anchored bottom in CSS). Tablets: split top/bottom (centered in CSS).
   const cssH = isPhone ? Math.floor(vh * 1.15) : (isTablet ? Math.floor(vh * 1.08) : vh);
 
     if (theCanvas) setCanvasCSSSize(theCanvas, vw, cssH);

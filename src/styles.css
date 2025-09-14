@@ -80,12 +80,12 @@ body::-webkit-scrollbar-thumb:active {
 
 /* Phones: anchor artboard to bottom so added height extends upward */
 @media (max-width: 599.98px) {
-    #artboard { top: 0; bottom: auto; }
+    #artboard { bottom: 0; top: auto; }
 }
 
-/* Tablets: anchor artboard to top so added height extends downward (top edge buffer) */
+/* Tablets: center artboard vertically so extra height is split top & bottom */
 @media (min-width: 600px) and (max-width: 1100px) {
-    #artboard { bottom: 0; top: auto; }
+    #artboard { top: 50%; bottom: auto; transform: translateY(-50%); }
 }
 
 #backgrounds {
