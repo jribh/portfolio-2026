@@ -1,3 +1,9 @@
+// Mobile-specific params (override only those that differ)
+export const reededParamsMobile = {
+  frostStop2: 1.8, // disable frost on mobile
+  fluteWidthMobile: 2.2
+};
+
 import * as THREE from 'three';
 import { Effect, EffectPass } from 'postprocessing';
 
@@ -9,8 +15,7 @@ export const reededParams = {
   bandTiltDeg: 0.0,             // small extra rotation used only for banding/prismatic feel
   fluteWidthUnit: 'vw',         // 'vw' | '%' | 'px'
   fluteWidthDesktop: 0.7,       // base width at center (in vw/% or px if unit='px') - standard reference
-  fluteWidthTablet: 1.7,        // wider on tablet to maintain visibility
-  fluteWidthMobile: 2.0,        // much wider on mobile to ensure reeds are clearly visible
+  fluteWidthTablet: 2.0,        // wider on tablet to maintain visibility
   // Flute width variation from center to edges
   fluteWidthCenterScale: 1,   // multiplier at center (1.0 = 100% of base width)
   fluteWidthEdgeScale: 1,     // multiplier at edges (1.0 = 100% of base width)
@@ -442,6 +447,8 @@ export function setReededResolution(effect, w, h){
   if (u) u.value.set(w, h);
   const fw = effect.uniforms.get('uFluteWidthPx');
   if (fw) fw.value = computeFluteWidthPx(reededParams, w);
+  // Update params based on new resolution
+  updateReeded(effect, null);
 }
 
 export function tickReededTime(effect, dt){
@@ -449,39 +456,43 @@ export function tickReededTime(effect, dt){
 }
 
 export function updateReeded(effect, pass, partial){
-  Object.assign(reededParams, partial || {});
+  const res = effect?.uniforms.get('resolution')?.value;
+  const canvasW = res ? res.x : 0;
+  let params = { ...reededParams };
+  if (canvasW <= 480) {
+    params = { ...params, ...reededParamsMobile };
+  }
+  Object.assign(params, partial || {});
   if (effect) {
     const U = effect.uniforms;
-  U.get('uRotation').value = reededParams.rotationDeg;
-  U.get('uBandTiltDeg').value = reededParams.bandTiltDeg;
-  const res = effect.uniforms.get('resolution')?.value;
-  const canvasW = res ? res.x : 0;
-  U.get('uFluteWidthPx').value = computeFluteWidthPx(reededParams, canvasW);
-  U.get('uRefractPx').value = reededParams.refractPx;
-  U.get('uCurve').value = reededParams.curve;
-  U.get('uEdgeFeatherPx').value = reededParams.edgeFeatherPx;
-  U.get('gradientWhiteStrength').value = reededParams.gradientWhiteStrength;
-  U.get('gradientBlackStrength').value = reededParams.gradientBlackStrength;
-  U.get('gradientStop1Distance').value = reededParams.gradientStop1Distance;
-  U.get('gradientStop2Distance').value = reededParams.gradientStop2Distance;
-  U.get('refractPxStop1').value = reededParams.refractPxStop1;
-  U.get('refractPxStop2').value = reededParams.refractPxStop2;
-  U.get('gradientWhiteStop1').value = reededParams.gradientWhiteStop1;
-  U.get('gradientWhiteStop2').value = reededParams.gradientWhiteStop2;
-  U.get('gradientBlackStop1').value = reededParams.gradientBlackStop1;
-  U.get('gradientBlackStop2').value = reededParams.gradientBlackStop2;
-  U.get('frostStop1').value = reededParams.frostStop1;
-  U.get('frostStop2').value = reededParams.frostStop2;
-  U.get('splitScreenMode').value = reededParams.splitScreenMode ? 1.0 : 0.0;
-  U.get('splitScreenBoundary').value = reededParams.splitScreenBoundary;
-  // Depth params (texture set from main each frame via setReededDepth())
-  U.get('cameraNear').value = U.get('cameraNear').value || 0.1; // keep as-is until set
-  U.get('cameraFar').value = U.get('cameraFar').value || 1000.0;
-  U.get('depthD0').value = reededParams.depthD0;
-  U.get('depthD1').value = reededParams.depthD1;
-  U.get('depthMaskDebug').value = reededParams.depthMaskDebug ? 1.0 : 0.0;
+    U.get('uRotation').value = params.rotationDeg;
+    U.get('uBandTiltDeg').value = params.bandTiltDeg;
+    U.get('uFluteWidthPx').value = computeFluteWidthPx(params, canvasW);
+    U.get('uRefractPx').value = params.refractPx;
+    U.get('uCurve').value = params.curve;
+    U.get('uEdgeFeatherPx').value = params.edgeFeatherPx;
+    U.get('gradientWhiteStrength').value = params.gradientWhiteStrength;
+    U.get('gradientBlackStrength').value = params.gradientBlackStrength;
+    U.get('gradientStop1Distance').value = params.gradientStop1Distance;
+    U.get('gradientStop2Distance').value = params.gradientStop2Distance;
+    U.get('refractPxStop1').value = params.refractPxStop1;
+    U.get('refractPxStop2').value = params.refractPxStop2;
+    U.get('gradientWhiteStop1').value = params.gradientWhiteStop1;
+    U.get('gradientWhiteStop2').value = params.gradientWhiteStop2;
+    U.get('gradientBlackStop1').value = params.gradientBlackStop1;
+    U.get('gradientBlackStop2').value = params.gradientBlackStop2;
+    U.get('frostStop1').value = params.frostStop1;
+    U.get('frostStop2').value = params.frostStop2;
+    U.get('splitScreenMode').value = params.splitScreenMode ? 1.0 : 0.0;
+    U.get('splitScreenBoundary').value = params.splitScreenBoundary;
+    // Depth params (texture set from main each frame via setReededDepth())
+    U.get('cameraNear').value = U.get('cameraNear').value || 0.1; // keep as-is until set
+    U.get('cameraFar').value = U.get('cameraFar').value || 1000.0;
+    U.get('depthD0').value = params.depthD0;
+    U.get('depthD1').value = params.depthD1;
+    U.get('depthMaskDebug').value = params.depthMaskDebug ? 1.0 : 0.0;
   }
-  if (pass) pass.enabled = !!reededParams.enabled;
+  if (pass) pass.enabled = !!params.enabled;
 }
 
 // Helper to update depth texture and camera planes per frame

@@ -40,6 +40,158 @@ function isPhoneWidth() {
   } catch { return false; }
 }
 
+// Gyro-based head look state (touch devices)
+let gyroControlActive = false;                     // true once user unlocks and events stream
+let deviceOrientationPermissionGranted = false;    // iOS-style permission granted flag
+let deviceOrientationListener = null;              // current bound listener
+let baselineOrientation = { beta: null, gamma: null, alpha: null }; // calibration at unlock
+let _gyroBtn = null;                               // reference to unlock button element
+
+function _createGyroUnlockButton() {
+  if (!IS_TOUCH_DEVICE || _gyroBtn) return;
+  const btn = document.createElement('button');
+  btn.id = 'gyro-unlock-btn';
+  btn.setAttribute('type', 'button');
+  btn.setAttribute('aria-label', 'Unlock motion control');
+  btn.innerHTML = `
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M12 1a3 3 0 0 0-3 3v2h2V4a1 1 0 1 1 2 0v2h2V4a3 3 0 0 0-3-3Zm7.07 5.93-1.41 1.41A7.97 7.97 0 0 1 20 12c0 4.42-3.58 8-8 8a7.97 7.97 0 0 1-3.66-.93l-1.41 1.41A9.97 9.97 0 0 0 12 22c5.52 0 10-4.48 10-10 0-2.2-.71-4.23-1.93-5.87ZM4 12c0-1.43.37-2.77 1.02-3.94l-1.5-1.5A9.96 9.96 0 0 0 2 12c0 2.2.71 4.23 1.93 5.87l1.41-1.41A7.97 7.97 0 0 1 4 12Zm8 1a1 1 0 0 0 0-2c-1.66 0-3-1.34-3-3H7a5 5 0 0 0 5 5Z"/>
+    </svg>
+    <span class="label">Move to look</span>
+  `;
+  // Bind both click and touchend to maximize iOS gesture detection
+  btn.addEventListener('click', _handleGyroUnlockClick, { passive: false });
+  btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); _handleGyroUnlockClick(e); }, { passive: false });
+  document.body.appendChild(btn);
+  _gyroBtn = btn;
+}
+
+function _handleGyroUnlockClick(evt) {
+  if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
+  // Prefer secure context (https or localhost); still attempt request even if not
+  const isLocalhost = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname || '');
+  if (!window.isSecureContext && !isLocalhost) {
+    _flashGyroMsg('Tip: Motion works best over HTTPS.');
+  }
+  // iOS 13+ needs explicit permission via user gesture – request within this handler
+  const hasOrientationReq = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+  const hasMotionReq = typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function';
+  if (hasOrientationReq || hasMotionReq) {
+    let orientRes = 'granted';
+    let motionRes = 'granted';
+    const doEnable = () => {
+      deviceOrientationPermissionGranted = (orientRes === 'granted');
+      if (!deviceOrientationPermissionGranted) {
+        _flashGyroMsg('Motion permission was denied.');
+        return;
+      }
+      _enableGyroControl();
+    };
+    try {
+      const motionPromise = hasMotionReq ? DeviceMotionEvent.requestPermission() : Promise.resolve('granted');
+      motionPromise.catch(()=> 'denied').then((mr)=>{ motionRes = mr; });
+    } catch {}
+    try {
+      const orientPromise = hasOrientationReq ? DeviceOrientationEvent.requestPermission() : Promise.resolve('granted');
+      orientPromise.then((or)=>{ orientRes = or; doEnable(); }).catch(()=>{ orientRes = 'denied'; doEnable(); });
+    } catch {
+      _flashGyroMsg('Motion permission was denied.');
+    }
+  } else {
+    // Non‑iOS or older browsers – enable directly
+    deviceOrientationPermissionGranted = true;
+    _enableGyroControl();
+  }
+}
+
+// Request both orientation and motion permissions on iOS; return true if orientation is granted
+async function requestIOSMotionPermissions(){
+  // Non-iOS or old browsers
+  const hasOrientationReq = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+  const hasMotionReq = typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function';
+  if (!hasOrientationReq && !hasMotionReq) return true; // not gated
+  // Try requesting both; some iOS versions gate orientation behind motion too
+  let orient = 'granted';
+  let motion = 'granted';
+  try { if (hasOrientationReq) orient = await DeviceOrientationEvent.requestPermission(); } catch {}
+  try { if (hasMotionReq) motion = await DeviceMotionEvent.requestPermission(); } catch {}
+  return orient === 'granted';
+}
+
+function _enableGyroControl(){
+  // Calibrate baseline on first event
+  baselineOrientation = { beta: null, gamma: null, alpha: null };
+  gyroControlActive = true;
+  allowHeadLook = true;
+  if (chin) startHeadLook();
+
+  // Hide button once active
+  if (_gyroBtn) {
+    _gyroBtn.classList.add('active');
+    _gyroBtn.style.display = 'none';
+  }
+
+  // Attach listeners once
+  if (!deviceOrientationListener) {
+    deviceOrientationListener = function (ev) {
+      const { alpha, beta, gamma } = ev || {};
+      if (typeof beta !== 'number' || typeof gamma !== 'number') return;
+      if (baselineOrientation.beta === null) {
+        baselineOrientation.beta = beta;
+        baselineOrientation.gamma = gamma;
+        baselineOrientation.alpha = alpha || 0;
+      }
+      _updateHeadLookFromGyro(alpha, beta, gamma);
+    };
+  }
+  window.addEventListener('deviceorientation', deviceOrientationListener, { passive: true });
+  // Some browsers emit deviceorientationabsolute; bind as fallback
+  window.addEventListener('deviceorientationabsolute', deviceOrientationListener, { passive: true });
+}
+
+function _flashGyroMsg(text) {
+  try {
+    const id = 'gyro-msg-toast';
+    let el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = id;
+      el.className = 'gyro-toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 2600);
+  } catch {}
+}
+
+function _updateHeadLookFromGyro(alpha, beta, gamma) {
+  // Compute deltas from baseline to treat unlock orientation as neutral
+  const dBeta = (beta - (baselineOrientation.beta ?? 0));   // front/back tilt
+  const dGamma = (gamma - (baselineOrientation.gamma ?? 0)); // left/right tilt
+
+  // Clamp to reasonable range
+  const cb = THREE.MathUtils.clamp(dBeta, -45, 45);
+  const cg = THREE.MathUtils.clamp(dGamma, -45, 45);
+
+  // Normalize to [-1, 1]
+  const nb = cb / 30; // more sensitive vertically
+  const ng = cg / 30; // more sensitive horizontally
+
+  // Map to pseudo-cursor around center (fraction of viewport)
+  const cx = window.innerWidth / 2;
+  const cy = window.innerHeight / 2;
+  const rangeX = window.innerWidth * 0.35; // how far from center we steer
+  const rangeY = window.innerHeight * 0.25;
+
+  // In portrait, gamma (left/right) -> X, beta (front/back) -> Y (invert to feel natural)
+  const targetX = cx + THREE.MathUtils.clamp(ng, -1, 1) * rangeX;
+  const targetY = cy + THREE.MathUtils.clamp(-nb, -1, 1) * rangeY;
+
+  mousecoords = { x: targetX, y: targetY };
+  lastMouseMoveTime = Date.now(); // keep considered active while moving
+}
+
 const inactivityThreshold = 5000; // time before head moves back to position
 
 const WIND_BASE_TS = 1.0;
@@ -89,7 +241,6 @@ let renderer = new THREE.WebGLRenderer({
     canvas : theCanvas,
     alpha : true,
     antialias : true
-//  preserveDrawingBuffer: true 
 })
 
 THREE.Cache.clear();
@@ -98,14 +249,12 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.setClearColor( 0x000000, 0 ); // the default
 renderer.shadowMap.enabled = true;
 renderer.physicallyCorrectLights = true;
-// Start dark
 renderer.toneMappingExposure = 0.0;
 // Prefer maximum available anisotropy for crisper textures
 const MAX_ANISOTROPY = (renderer.capabilities && typeof renderer.capabilities.getMaxAnisotropy === 'function')
   ? renderer.capabilities.getMaxAnisotropy()
   : 1;
 
-// // This is for the bloom post processing
 const renderScene = new RenderPass(scene, camera)
 const composer = new EffectComposer(renderer)
 
@@ -126,9 +275,7 @@ window.updateReeded = (partial)=> _updateReeded(_reedEffect, _reedPass, partial)
 let _vignetteEffect = null;
 let _vignettePass = null;
 
-// ----------------------------------
 // Fullscreen gradient background plane
-// ----------------------------------
 let _bgGrad = null;
 // Black bottom cover plane for portrait phones
 let _bottomCover = null;
@@ -141,7 +288,7 @@ function ensureBottomCover(){
     uniforms: {
       uColor:    { value: new THREE.Color(0x000000) },
       uOpacity:  { value: 1.0 },
-      uFeather:  { value: 0.3 } // fraction of height to feather at top (increased blur)
+      uFeather:  { value: 0.5 } // fraction of height to feather at top (increased blur)
     },
     vertexShader: `
       varying vec2 vUv;
@@ -293,9 +440,6 @@ function updateGradientColorsForScroll(scrollProgress) {
   _bgGrad.material.uniforms.uTopColor.value.copy(currentTopColor);
 }
 
-// ----------------------------------
-// Large blurred glow blobs (additive quads behind head)
-// ----------------------------------
 let _glowBlobs = [];
 let _glowInited = false;
 
@@ -477,16 +621,10 @@ function initGlowBlobsIfNeeded(){
 const hemLight = new THREE.HemisphereLight( 0xabd5f7, 0x000000, 40 );
 scene.add( hemLight );
 
-// =========================
-// POINT & SPOT LIGHT SETUP
-// =========================
-
 // Strong warm red point light from below/front center (under-face glow)
 const underfacePointLight = new THREE.PointLight(0xE60E00, 3000, 12); // color, intensity, range
 underfacePointLight.position.set(0, 8, -4);
 scene.add(underfacePointLight);
-// const underfacePointLightHelper = new THREE.PointLightHelper(underfacePointLight, 20);
-// scene.add(underfacePointLightHelper);
 
 // Warm red spotlight from slightly below, angled up toward hairline
 const redUnderHairSpot = new THREE.SpotLight(0xE60E00, 3500, 40, Math.PI / 3.6, 0.8, 1);
@@ -496,8 +634,6 @@ redUnderHairSpot.target.updateMatrixWorld();
 redUnderHairSpot.castShadow = false; // no shadows for performance
 scene.add(redUnderHairSpot);
 scene.add(redUnderHairSpot.target);
-// const redUnderHairSpotHelper = new THREE.SpotLightHelper(redUnderHairSpot);
-// scene.add(redUnderHairSpotHelper);
 
 // Warm red spotlight from front-right side
 const redFrontRightSpot = new THREE.SpotLight(0xE60E00, 1000);
@@ -510,8 +646,6 @@ redFrontRightSpot.target.position.set(14, 25, -4);
 redFrontRightSpot.target.updateMatrixWorld();
 scene.add(redFrontRightSpot);
 scene.add(redFrontRightSpot.target);
-// const redFrontRightSpotHelper = new THREE.SpotLightHelper(redFrontRightSpot);
-// scene.add(redFrontRightSpotHelper);
 
 // Narrow warm red spotlight from far upper-right
 const redUpperRightSpot = new THREE.SpotLight(0x880800, 1200);
@@ -524,8 +658,6 @@ redUpperRightSpot.target.position.set(6, 28, 0);
 redUpperRightSpot.target.updateMatrixWorld();
 scene.add(redUpperRightSpot);
 scene.add(redUpperRightSpot.target);
-// const redUpperRightSpotHelper = new THREE.SpotLightHelper(redUpperRightSpot);
-// scene.add(redUpperRightSpotHelper);
 
 // Warm red spotlight from left side
 const redLeftSpot = new THREE.SpotLight(0x880800, 100);
@@ -538,8 +670,6 @@ redLeftSpot.target.position.set(0, 17, 11);
 redLeftSpot.target.updateMatrixWorld();
 scene.add(redLeftSpot);
 scene.add(redLeftSpot.target);
-// const redLeftSpotHelper = new THREE.SpotLightHelper(redLeftSpot);
-// scene.add(redLeftSpotHelper);
 
 // Top-down cool bluish spotlight
 const topCoolBlueSpot = new THREE.SpotLight(0x75B3CA, 150);
@@ -552,8 +682,6 @@ topCoolBlueSpot.target.position.set(0, 0, -5);
 topCoolBlueSpot.target.updateMatrixWorld();
 scene.add(topCoolBlueSpot);
 scene.add(topCoolBlueSpot.target);
-// const topCoolBlueSpotHelper = new THREE.SpotLightHelper(topCoolBlueSpot);
-// scene.add(topCoolBlueSpotHelper);
 
 // Top-down neutral gray spotlight from upper-left
 const topGrayLeftSpot = new THREE.SpotLight(0x8D8D8D, 300);
@@ -566,8 +694,6 @@ topGrayLeftSpot.target.position.set(-13, 0, 4);
 topGrayLeftSpot.target.updateMatrixWorld();
 scene.add(topGrayLeftSpot);
 scene.add(topGrayLeftSpot.target);
-// const topGrayLeftSpotHelper = new THREE.SpotLightHelper(topGrayLeftSpot);
-// scene.add(topGrayLeftSpotHelper);
 
 // Overhead neutral gray spotlight from slightly front-right
 const overheadNeutralSpot = new THREE.SpotLight(0x8D8D8D, 100);
@@ -580,8 +706,6 @@ overheadNeutralSpot.target.position.set(2, 22, 11); // aiming toward upper face/
 overheadNeutralSpot.target.updateMatrixWorld();
 scene.add(overheadNeutralSpot);
 scene.add(overheadNeutralSpot.target);
-// const overheadNeutralSpotHelper = new THREE.SpotLightHelper(overheadNeutralSpot);
-// scene.add(overheadNeutralSpotHelper);
 
 // Collect all lights, remember their final intensities, and start at 10%
 const allLights = [
@@ -604,7 +728,6 @@ allLights.forEach(l => {
 });
 
 // Call once before adding any RectAreaLight
-// RectAreaLightUniformsLib.init();
 
 const pmremGenerator = new THREE.PMREMGenerator(renderer);
 pmremGenerator.compileEquirectangularShader();
@@ -834,8 +957,6 @@ function manipulateModel(model, animations) {
   initGlowBlobsIfNeeded();
 }
 
-// ------------------ head movement -----------------------------------------------
-
 // --- Tunables ---
 const DEGREE_LIMIT = 25;
 const LOOK_DAMP    = 10;
@@ -936,7 +1057,7 @@ function _headLookRAF() {
 
   if (typeof chin !== 'undefined' && chin) {
     // Choose head target: center if inactive/resizing, else cursor
-    const useCenter = IS_TOUCH_DEVICE || inactive || resizing;
+  const useCenter = ((IS_TOUCH_DEVICE && !gyroControlActive) || inactive || resizing);
     let targetCoords = useCenter ? { x: window.innerWidth / 2, y: window.innerHeight / 2 } : mousecoords;
 
     // Ease the first movement after startup
@@ -1108,8 +1229,6 @@ if (IS_TOUCH_DEVICE && isPhoneWidth()) {
 }
 
 
-
-// =================================== Resize logic + Adaptive Performance =================================
 
 // ---- Device heuristics & base DPR caps ----
 const MAX_EFFECTIVE_DPR = 1.75; // absolute safety ceiling
@@ -1388,7 +1507,7 @@ function perfAdaptiveUpdate(delta){
   _updatePerfHUD(150);
 }
 
-// -------------------- Lightweight Perf HUD --------------------
+// Lightweight Perf HUD
 let _perfHUD = null;
 let _perfHUDLastUpdate = 0;
 const _perfLog = [];
@@ -1402,10 +1521,13 @@ function _initPerfHUD(){
     st.id = styleId;
     st.textContent = `
       #perf-hud{position:fixed;top:8px;left:8px;z-index:10000;background:rgba(12,12,12,.72);color:#e8efff;border-radius:10px;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;backdrop-filter:saturate(1.15) blur(2px);box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:auto;max-width:80vw}
+      #perf-hud.collapsed{background:none;border:none;border-radius:0;padding:0}
       #perf-hud .hd{display:flex;align-items:center;gap:6px;font-weight:700;padding:8px 10px;cursor:pointer;user-select:none}
+      #perf-hud.collapsed .hd{padding:2px 6px;font-size:13px;font-weight:400}
       #perf-hud .bd{white-space:pre-wrap;padding:0 10px 8px 10px}
       #perf-hud .lg{white-space:pre-wrap;margin:6px 0 8px 0;border-top:1px solid rgba(255,255,255,.08);padding:6px 10px 0 10px;max-height:140px;overflow:auto}
       #perf-hud.collapsed .bd, #perf-hud.collapsed .lg{display:none}
+      #perf-hud.collapsed .hd .caret{display:none}
       #perf-hud .tag{display:inline-block;font-weight:700;padding:0 6px;border-radius:6px;color:#111}
       #perf-hud .tag.up{background:#16c784}
       #perf-hud .tag.down{background:#ff6b6b}
@@ -1413,7 +1535,9 @@ function _initPerfHUD(){
       #perf-hud .ts{opacity:.7}
       @media (max-width:640px){
         #perf-hud{top:6px;left:6px;border-radius:8px}
+        #perf-hud.collapsed{border-radius:0}
         #perf-hud .hd{padding:6px 8px;font-size:11px}
+        #perf-hud.collapsed .hd{padding:2px 4px;font-size:12px}
         #perf-hud .bd{padding:0 8px 6px 8px;font-size:11px}
         #perf-hud .lg{padding:6px 8px 0 8px;max-height:100px;font-size:10px}
       }
@@ -1426,7 +1550,7 @@ function _initPerfHUD(){
   wrap.className = 'collapsed';
 
   const head = document.createElement('div'); head.className='hd';
-  const caret = document.createElement('span'); caret.textContent='▸'; caret.style.opacity='.8';
+  const caret = document.createElement('span'); caret.textContent='▸'; caret.style.opacity='.8'; caret.className='caret';
   const title = document.createElement('span'); title.textContent = 'Perf';
   const mini = document.createElement('span'); mini.style.opacity='.85'; mini.style.fontWeight='600'; mini.style.marginLeft='4px'; mini.className='mini';
   head.appendChild(caret); head.appendChild(title); head.appendChild(mini);
@@ -1435,7 +1559,7 @@ function _initPerfHUD(){
   const log = document.createElement('div'); log.className='lg';
   wrap.appendChild(head); wrap.appendChild(body); wrap.appendChild(log);
   document.body.appendChild(wrap);
-  _perfHUD = { el: wrap, head, body, log, caret, mini };
+  _perfHUD = { el: wrap, head, body, log, caret, mini, title };
 
   // Toggle expand/collapse on click/tap
   const toggle = ()=>{
@@ -1461,10 +1585,13 @@ function _updatePerfHUD(throttleMs = 150){
   const collapsed = _perfHUD.el.classList.contains('collapsed');
   // Header caret + compact line
   _perfHUD.caret.textContent = collapsed ? '▸' : '▾';
-  const ema = (_lastEmaFPS && isFinite(_lastEmaFPS)) ? `${_lastEmaFPS.toFixed(0)}fps` : '';
+  const ema = (_lastEmaFPS && isFinite(_lastEmaFPS)) ? `${_lastEmaFPS.toFixed(0)}` : '';
   const bucket = (typeof _dprBucketIndex==='number') ? `DPR ${DPR_BUCKETS[_dprBucketIndex]}` : '';
   const tier = (typeof _effectQualityLevel==='number') ? EFFECT_QUALITY_LEVELS[_effectQualityLevel].name : '';
-  _perfHUD.mini.textContent = [ema, bucket, tier].filter(Boolean).join(' · ');
+  _perfHUD.mini.textContent = collapsed ? '' : [bucket, tier].filter(Boolean).join(' · ');
+
+  // Update title based on collapsed state
+  _perfHUD.title.textContent = collapsed ? ema : 'Perf';
 
   // Body and Log
   _perfHUD.body.textContent = _describeQuality();
@@ -1511,8 +1638,6 @@ function _renderPerfLogLine(entry){
   return `<div>${parts.join('')}</div>`;
 }
 
-// Removed grain pulse smoother per request
-
 // Expose debug controls
 window.__perfDebug = {
   get status(){ return { dpr: currentTargetPixelRatio(), bucket: DPR_BUCKETS[_dprBucketIndex], tier: EFFECT_QUALITY_LEVELS[_effectQualityLevel].name, baseCapCurrent: __deviceProfile.baseCapCurrent, baseCapMax: __deviceProfile.baseCapMax }; },
@@ -1540,8 +1665,8 @@ function updateOrthoFrustum(cam, aspect) {
     const isPhonePortrait = vw < 450;
     if (isPhonePortrait) {
       // Phones (portrait): zoom out a bit more and nudge scene up
-      size = frustumSize * 1.52; // Decrease multiplier to increase zoom
-      heightOffset = frustumHeight - 11; // move scene up
+      size = frustumSize * 1.5; // Decrease multiplier to increase zoom
+      heightOffset = frustumHeight - 8; // Subtract with higher number to move scene up
     } else {
       // Tablets (portrait): zoom out a bit, keep height offset as-is
       size = frustumSize * 1.4;
@@ -1638,21 +1763,12 @@ function updateSaturationForScroll(scrollProgress) {
 // Compute exposure as a smooth function across part 2 -> 3
 // 0.0-0.5: keep baseExposure; 0.5-1.0: smoothly lerp to darker exposure
 function computeExposureForScroll(scrollProgress) {
-  const start = 0.5; // begin darkening at start of part 3 transition
-  const end = 1.0;   // reach final darkness at the end
-  const t = THREE.MathUtils.clamp((scrollProgress - start) / (end - start), 0, 1);
-  // Smoothstep easing for a gentle curve
-  const eased = t * t * (3 - 2 * t);
-  const finalFactor = 0.7; // final exposure factor at end of part 3 (unify target)
-  // Lerp from baseExposure to baseExposure * finalFactor
-  return baseExposure * (1 - eased * (1 - finalFactor));
+  // Keep exposure constant throughout scrolling
+  return baseExposure;
 }
 
 // Determine glass effect configuration based on scroll progress
 function getGlassModeForProgress(scrollProgress) {
-  // scrollProgress is 0-1 across all 3 sections
-  // 0.0-0.5: Page 1 to Page 2 (left half gets glass, right half stays clear)
-  // 0.5-1.0: Page 2 to Page 3 (right half gradually gets glass too, reaching full coverage)
   
   if (scrollProgress <= 0.5) {
     // First half: transitioning from page 1 to page 2
@@ -1709,11 +1825,8 @@ function initializeScrollEffectsFromCurrentPosition() {
   
   // Note: Initial exposure will be set correctly by the startup sequence based on currentScrollProgress
   
-  // Also set renderer exposure to match current scroll smoothly (avoids jumps on reload)
-  if (renderer) {
-    renderer.toneMappingExposure = computeExposureForScroll(scrollProgress);
-  }
-
+  // Exposure remains constant throughout scrolling
+  
   console.log(`Initialized scroll effects: progress=${scrollProgress.toFixed(2)}, section=${currentSection}, baseExposure=${baseExposure}`);
 }
 
@@ -1759,10 +1872,7 @@ function snapToSection(sectionIndex) {
       updateGradientColorsForScroll(currentScrollProgress);
       // Update saturation during smooth transition
       updateSaturationForScroll(currentScrollProgress);
-      // Keep exposure in sync during GSAP-driven progress changes as well
-      if (renderer) {
-        renderer.toneMappingExposure = computeExposureForScroll(currentScrollProgress);
-      }
+      // Exposure remains constant throughout scrolling
     }
   });
 }
@@ -1794,10 +1904,7 @@ function handleScroll() {
   // Update saturation based on scroll position
   updateSaturationForScroll(scrollProgress);
   
-  // Update exposure smoothly based on scroll position (no step change)
-  if (renderer) {
-    renderer.toneMappingExposure = computeExposureForScroll(scrollProgress);
-  }
+  // Exposure remains constant throughout scrolling
   
   // Determine target section for snapping
   const newSection = Math.round(scrollY / sectionHeight);
@@ -2017,8 +2124,8 @@ async function startStartupSequence(){
 
   // Phase 4: exposure/background 800ms after eyes
   tl.add('phase4', 'eyesOn+=0.8');
-  // Calculate the correct target exposure based on current scroll position
-  const startupTargetExposure = currentScrollProgress > 0.5 ? baseExposure * 0.7 : baseExposure;
+  // Keep exposure constant throughout scrolling
+  const startupTargetExposure = baseExposure;
   tl.to(renderer, { toneMappingExposure: startupTargetExposure, duration: 1.6, ease: 'power1.inOut' }, 'phase4');
   tl.to(bgEl, { opacity: 0.75, duration: 1.8, ease: 'power1.inOut' }, 'phase4');
 
@@ -2049,6 +2156,8 @@ async function startStartupSequence(){
     allowHeadLook = false;
     // Keep head centered and run only breathing updates on touch devices
     startBreathingOnly();
+    // Show the unlock button for motion control on touch devices
+    _createGyroUnlockButton();
   }
   _shoulderStartMs = Date.now();
   _chinBreathActive = false;
