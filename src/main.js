@@ -1574,10 +1574,11 @@ function handleResize() {
     const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
     const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
 
-    // On portrait phones, oversize canvas height by ~15% to cover small viewport height increases
-    const isPortrait = vh >= vw;
-    const isPhonePortrait = isPortrait && vw < 500;
-    const cssH = isPhonePortrait ? Math.floor(vh * 1.15) : vh;
+  // Oversize canvas height on portrait devices to buffer iOS chrome show/hide
+  const isPortrait = vh >= vw;
+  const isPhonePortrait = isPortrait && vw < 500;
+  const isTabletPortrait = isPortrait && vw >= 500 && vw <= 1100; // iPad range
+  const cssH = isPhonePortrait ? Math.floor(vh * 1.15) : (isTabletPortrait ? Math.floor(vh * 1.08) : vh);
 
     if (theCanvas) setCanvasCSSSize(theCanvas, vw, cssH);
 
@@ -1595,8 +1596,11 @@ function handleResize() {
 }
 
 if (IS_TOUCH_DEVICE) {
-  // On touch devices: only handle orientation changes (avoid frequent viewport-height jitter resizes)
+  // On touch devices: handle orientation and visual viewport changes (iOS Safari UI chrome)
   window.addEventListener('orientationchange', handleResize, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', handleResize, { passive: true });
+  }
 } else {
   // On non-touch: respond to full resize and visualViewport changes
   window.addEventListener('resize', handleResize, { passive: true });
@@ -1625,6 +1629,19 @@ function updateSaturationForScroll(scrollProgress) {
   // Base saturation: -0.25, Target when scrolled: -0.8 (much more desaturated)
   const targetSaturation = baseSaturation - (scrollProgress * 0.0); // Reduces saturation by 0.30 when fully scrolled
   hueSatEffect.saturation = targetSaturation;
+}
+
+// Compute exposure as a smooth function across part 2 -> 3
+// 0.0-0.5: keep baseExposure; 0.5-1.0: smoothly lerp to darker exposure
+function computeExposureForScroll(scrollProgress) {
+  const start = 0.5; // begin darkening at start of part 3 transition
+  const end = 1.0;   // reach final darkness at the end
+  const t = THREE.MathUtils.clamp((scrollProgress - start) / (end - start), 0, 1);
+  // Smoothstep easing for a gentle curve
+  const eased = t * t * (3 - 2 * t);
+  const finalFactor = 0.7; // final exposure factor at end of part 3 (unify target)
+  // Lerp from baseExposure to baseExposure * finalFactor
+  return baseExposure * (1 - eased * (1 - finalFactor));
 }
 
 // Determine glass effect configuration based on scroll progress
@@ -1657,9 +1674,16 @@ function getGlassModeForProgress(scrollProgress) {
 }
 
 // Initialize effects based on current scroll position (for page reloads)
+function _getSectionCSSHeight(){
+  // Prefer measuring a section element to account for svh/dvh and our buffers
+  const sec = document.querySelector('.content-section');
+  if (sec) return sec.getBoundingClientRect().height;
+  return window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
+}
+
 function initializeScrollEffectsFromCurrentPosition() {
   const scrollY = window.scrollY;
-  const sectionHeight = window.innerHeight;
+  const sectionHeight = _getSectionCSSHeight();
   const totalSections = 3; // Now we have 3 sections
   const scrollProgress = Math.min(scrollY / (sectionHeight * (totalSections - 1)), 1.0); // Normalize to 0-1 across all sections
   
@@ -1688,6 +1712,11 @@ function initializeScrollEffectsFromCurrentPosition() {
   
   // Note: Initial exposure will be set correctly by the startup sequence based on currentScrollProgress
   
+  // Also set renderer exposure to match current scroll smoothly (avoids jumps on reload)
+  if (renderer) {
+    renderer.toneMappingExposure = computeExposureForScroll(scrollProgress);
+  }
+
   console.log(`Initialized scroll effects: progress=${scrollProgress.toFixed(2)}, section=${currentSection}, baseExposure=${baseExposure}`);
 }
 
@@ -1701,20 +1730,11 @@ function updateReededGlassProgress(progress) {
 }
 
 function snapToSection(sectionIndex) {
-  const targetY = sectionIndex * window.innerHeight;
+  const sectionHeight = _getSectionCSSHeight();
+  const targetY = sectionIndex * sectionHeight;
   const totalSections = 3;
   const targetProgress = sectionIndex / (totalSections - 1); // Normalize to 0-1 across all sections
-  
-  // Immediately update exposure to match the target section
-  if (renderer) {
-    const targetExposure = sectionIndex >= 2 ? baseExposure * 0.5 : baseExposure; // Only darken on final section
-    gsap.killTweensOf(renderer, "toneMappingExposure");
-    gsap.to(renderer, {
-      toneMappingExposure: targetExposure,
-      duration: 0.8, // Match the scroll duration
-      ease: "power2.out"
-    });
-  }
+  // Exposure will be driven by handleScroll() as the window scrolls; avoid conflicting tweens here
   
   window.scrollTo({
     top: targetY,
@@ -1743,6 +1763,10 @@ function snapToSection(sectionIndex) {
       updateGradientColorsForScroll(currentScrollProgress);
       // Update saturation during smooth transition
       updateSaturationForScroll(currentScrollProgress);
+      // Keep exposure in sync during GSAP-driven progress changes as well
+      if (renderer) {
+        renderer.toneMappingExposure = computeExposureForScroll(currentScrollProgress);
+      }
     }
   });
 }
@@ -1751,7 +1775,7 @@ function handleScroll() {
   if (isScrolling) return;
   
   const scrollY = window.scrollY;
-  const sectionHeight = window.innerHeight;
+  const sectionHeight = _getSectionCSSHeight();
   const totalSections = 3;
   const scrollProgress = Math.min(scrollY / (sectionHeight * (totalSections - 1)), 1.0); // Normalize to 0-1 across all sections
   
@@ -1774,15 +1798,9 @@ function handleScroll() {
   // Update saturation based on scroll position
   updateSaturationForScroll(scrollProgress);
   
-  // Update exposure immediately based on scroll position
+  // Update exposure smoothly based on scroll position (no step change)
   if (renderer) {
-    const targetExposure = scrollProgress > 0.5 ? baseExposure * 0.7 : baseExposure; // Only darken in final half (page 3)
-    gsap.killTweensOf(renderer, "toneMappingExposure");
-    gsap.to(renderer, {
-      toneMappingExposure: targetExposure,
-      duration: 0.1, // Very fast for real-time feel
-      ease: "power2.out"
-    });
+    renderer.toneMappingExposure = computeExposureForScroll(scrollProgress);
   }
   
   // Determine target section for snapping
