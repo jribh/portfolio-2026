@@ -32,6 +32,14 @@ const IS_TOUCH_DEVICE = (function(){
   } catch { return false; }
 })();
 
+// Width-based phone check using existing breakpoints (phones < 500px, tablets >= 500px)
+function isPhoneWidth() {
+  try {
+    const vw = window.visualViewport ? Math.floor(window.visualViewport.width) : window.innerWidth;
+    return vw < 500; // matches usage elsewhere (phone < 500, tablet 500-1100)
+  } catch { return false; }
+}
+
 const inactivityThreshold = 5000; // time before head moves back to position
 
 const WIND_BASE_TS = 1.0;
@@ -1094,8 +1102,8 @@ const brightnessContrastEffect = new BrightnessContrastEffect({
 
 // Grain overlay from the overlay effects module
 const { effect: grainEffect, pass: grainPass } = createGrainPass(camera);
-// Dial down grain on phones to avoid perceived softness
-if (IS_TOUCH_DEVICE) {
+// Dial down grain on phones only (not tablets), based on width breakpoints
+if (IS_TOUCH_DEVICE && isPhoneWidth()) {
   try { updateGrain(grainEffect, { opacity: 0.04 }); } catch {}
 }
 
