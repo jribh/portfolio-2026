@@ -124,16 +124,55 @@ let _bottomCover = null;
 function ensureBottomCover(){
   if (_bottomCover) return _bottomCover;
   const geo = new THREE.PlaneGeometry(1, 1, 1, 1);
-  const mat = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false });
+  // Shader with feathered top edge (fade alpha near top)
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor:    { value: new THREE.Color(0x000000) },
+      uOpacity:  { value: 1.0 },
+      uFeather:  { value: 0.3 } // fraction of height to feather at top (increased blur)
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main(){
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      varying vec2 vUv;
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      uniform float uFeather;
+      void main(){
+        // Fade out only near the top edge: fully opaque below, smooth to 0 at top
+        float a = 1.0 - smoothstep(1.0 - uFeather, 1.0, vUv.y);
+        gl_FragColor = vec4(uColor, a * uOpacity);
+      }
+    `,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false
+  });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'BottomCoverPlane';
-  mesh.renderOrder = -900; // after background (-1000), still behind most scene
-  mesh.position.z = -79;   // slightly in front of gradient background
-  mesh.visible = false;    // enabled only on portrait phones
+  // Draw last and above everything to hide seam
+  mesh.renderOrder = 999;
+  mesh.position.z = 100; // well in front of scene content
+  mesh.visible = false;  // enabled only when needed
   scene.add(mesh);
   _bottomCover = mesh;
   return mesh;
 }
+
+// Optional: allow runtime tuning of feather width (0..0.6 recommended)
+window.setBottomCoverFeather = function(v){
+  const m = ensureBottomCover();
+  if (m && m.material && m.material.uniforms && m.material.uniforms.uFeather){
+    m.material.uniforms.uFeather.value = Math.max(0.0, Math.min(0.6, Number(v) || 0));
+  }
+};
 
 function updateBottomCoverPlane(coverHeight){
   const m = ensureBottomCover();
@@ -1081,7 +1120,7 @@ let _effectQualityLevel = 0;
 
 // Performance adaptation thresholds
 const PERF_FPS_DROP_THRESHOLD = 55;        // trigger lowering when sustained below
-const PERF_FPS_RAISE_THRESHOLD = 70;       // must be at/above this to consider raising
+const PERF_FPS_RAISE_THRESHOLD = 65;       // must be at/above this to consider raising
 const PERF_DEGRADE_MIN_DURATION = 4000;    // ms of continuous low perf before degrading
 const PERF_UPGRADE_MIN_DURATION = 6000;    // ms of sustained high perf before upgrading
 const PERF_CHANGE_DEBOUNCE = 1300;         // ms between any two changes
@@ -1463,8 +1502,8 @@ function updateOrthoFrustum(cam, aspect) {
 
   // Update the bottom cover plane based on how much we shifted the scene up
   // Cover height equals the vertical offset applied (frustumHeight - heightOffset).
-  // Make it 3x as tall while staying anchored to the bottom.
-  const coverHeight = Math.max(0, frustumHeight - heightOffset) * 3;
+  // Keep it confined to the bottom area so it only slightly overlaps the model's bottom edge.
+  const coverHeight = Math.max(0, frustumHeight - heightOffset);
   updateBottomCoverPlane(coverHeight);
 }
 
@@ -1490,7 +1529,7 @@ function handleResize() {
 
     // On portrait phones, oversize canvas height by ~15% to cover small viewport height increases
     const isPortrait = vh >= vw;
-    const isPhonePortrait = isPortrait && vw < 450;
+    const isPhonePortrait = isPortrait && vw < 500;
     const cssH = isPhonePortrait ? Math.floor(vh * 1.15) : vh;
 
     if (theCanvas) setCanvasCSSSize(theCanvas, vw, cssH);
