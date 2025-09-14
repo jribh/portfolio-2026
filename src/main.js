@@ -1520,19 +1520,16 @@ function updateOrthoFrustum(cam, aspect) {
   // Base values
   let size = frustumSize;
   let heightOffset = frustumHeight;
-  // no extra headroom padding
 
   // Orientation check
   const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
   const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
   const isPortrait = vh >= vw;
-  const isPhonePortrait = isPortrait && vw < 600;
-  const isTabletPortrait = isPortrait && vw >= 600 && vw <= 1100; // iPad range
-  const isTablet = vw >= 600 && vw <= 1100; // all orientations
 
   // Device-responsive tweaks
   if (isPortrait) {
-    // Phones vs Tablets
+    // Breakpoints: Phones (portrait) if width < 450px, otherwise tablet
+    const isPhonePortrait = vw < 450;
     if (isPhonePortrait) {
       // Phones (portrait): zoom out a bit more and nudge scene up
       size = frustumSize * 1.52; // Decrease multiplier to increase zoom
@@ -1541,14 +1538,7 @@ function updateOrthoFrustum(cam, aspect) {
       // Tablets (portrait): zoom out a bit, keep height offset as-is
       size = frustumSize * 1.4;
       heightOffset = frustumHeight;
-    // No extra headroom on tablets
     }
-  }
-
-  // Shift scene slightly downward on tablets to counter added top headroom in CSS
-  // Positive offset moves the frustum up in world space, placing content lower on screen.
-  if (isTablet) {
-    heightOffset = heightOffset + 1.0; // tune as needed
   }
 
   cam.left   = -size * aspect / 2;
@@ -1584,12 +1574,10 @@ function handleResize() {
     const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
     const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
 
-  // Oversize canvas to buffer UI chrome changes
-  const isPortrait = vh >= vw;
-  const isPhone = vw < 600;
-  const isTablet = vw >= 600 && vw <= 1100;
-  // Phones: grow upward (anchored bottom in CSS). Tablets: split top/bottom (centered in CSS).
-  const cssH = isPhone ? Math.floor(vh * 1.15) : (isTablet ? Math.floor(vh * 1.08) : vh);
+    // On portrait phones, oversize canvas height by ~15% to cover small viewport height increases
+    const isPortrait = vh >= vw;
+    const isPhonePortrait = isPortrait && vw < 500;
+    const cssH = isPhonePortrait ? Math.floor(vh * 1.15) : vh;
 
     if (theCanvas) setCanvasCSSSize(theCanvas, vw, cssH);
 
