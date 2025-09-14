@@ -9,8 +9,8 @@ export const reededParams = {
   bandTiltDeg: 0.0,             // small extra rotation used only for banding/prismatic feel
   fluteWidthUnit: 'vw',         // 'vw' | '%' | 'px'
   fluteWidthDesktop: 0.7,       // base width at center (in vw/% or px if unit='px') - standard reference
-  fluteWidthTablet: 1.6,        // wider on tablet to maintain visibility
-  fluteWidthMobile: 3.2,        // much wider on mobile to ensure reeds are clearly visible
+  fluteWidthTablet: 2,        // wider on tablet to maintain visibility
+  fluteWidthMobile: 2,        // much wider on mobile to ensure reeds are clearly visible
   // Flute width variation from center to edges
   fluteWidthCenterScale: 1,   // multiplier at center (1.0 = 100% of base width)
   fluteWidthEdgeScale: 1,     // multiplier at edges (1.0 = 100% of base width)

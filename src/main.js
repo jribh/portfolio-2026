@@ -92,6 +92,10 @@ renderer.shadowMap.enabled = true;
 renderer.physicallyCorrectLights = true;
 // Start dark
 renderer.toneMappingExposure = 0.0;
+// Prefer maximum available anisotropy for crisper textures
+const MAX_ANISOTROPY = (renderer.capabilities && typeof renderer.capabilities.getMaxAnisotropy === 'function')
+  ? renderer.capabilities.getMaxAnisotropy()
+  : 1;
 
 // // This is for the bloom post processing
 const renderScene = new RenderPass(scene, camera)
@@ -681,6 +685,22 @@ function manipulateModel(model, animations) {
 
     const shadowMaskTexture = new THREE.TextureLoader().load(shadowMaskUrl);
     shadowMaskTexture.flipY = false;
+    if (shadowMaskTexture) shadowMaskTexture.anisotropy = MAX_ANISOTROPY;
+
+    // Helper: set max anisotropy on all textures a material may use
+    function setMaterialMaxAnisotropy(mat){
+      if (!mat) return;
+      const maybeSet = (tex)=>{ if (tex && tex.isTexture) tex.anisotropy = Math.max(tex.anisotropy || 1, MAX_ANISOTROPY); };
+      maybeSet(mat.map);
+      maybeSet(mat.normalMap);
+      maybeSet(mat.roughnessMap);
+      maybeSet(mat.metalnessMap);
+      maybeSet(mat.aoMap);
+      maybeSet(mat.emissiveMap);
+      maybeSet(mat.specularMap);
+      maybeSet(mat.clearcoatNormalMap);
+      maybeSet(mat.displacementMap);
+    }
 
     // Helper: collect candidate names from node and a couple of ancestors
     function collectAncestorNamesLower(object3d) {
@@ -717,9 +737,12 @@ function manipulateModel(model, animations) {
             child.frustumCulled = false;
             child.geometry.computeTangents();
         }
-        if (child.isMesh) {
+    if (child.isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
+      // Sharpen texture filtering
+      if (Array.isArray(child.material)) child.material.forEach(setMaterialMaxAnisotropy);
+      else setMaterialMaxAnisotropy(child.material);
 
             // Add bloom to eyes (match node or ancestor names)
             if (nameMatches(child, 'eye')) {
@@ -776,6 +799,7 @@ function manipulateModel(model, animations) {
                 );
             };
 
+            setMaterialMaxAnisotropy(mat);
             mat.needsUpdate = true;
         }
     });
@@ -1053,6 +1077,10 @@ function doBreathing() {
 const clock = new THREE.Clock();
 
 const smaaEffect = new SMAAEffect(undefined, undefined, SMAAPreset.MEDIUM);
+// On touch devices we prefer crispness (higher DPR) over heavy AA; use a lighter SMAA preset
+if (IS_TOUCH_DEVICE) {
+  try { smaaEffect.preset = SMAAPreset.LOW; } catch {}
+}
 
 const hueSatEffect = new HueSaturationEffect({
     hue: 0.09,         // warmer tone
@@ -1066,6 +1094,10 @@ const brightnessContrastEffect = new BrightnessContrastEffect({
 
 // Grain overlay from the overlay effects module
 const { effect: grainEffect, pass: grainPass } = createGrainPass(camera);
+// Dial down grain on phones to avoid perceived softness
+if (IS_TOUCH_DEVICE) {
+  try { updateGrain(grainEffect, { opacity: 0.04 }); } catch {}
+}
 
 
 
@@ -1091,11 +1123,13 @@ function detectDeviceProfile(){
   if (isMobile){
     category='phone';
     if (isHighEndPhone){
-      baseCapInitial = 1.35; // sharper start for iPhone Pro / flagship Android
-      baseCapMax = 1.5;      // modest headroom; runtime scaler still governs
+      // High-end phones can sustain higher internal resolution while still >60fps
+      baseCapInitial = 1.6;  // noticeably sharper
+      baseCapMax = 1.7;      // allow slight headroom if performance is great
     } else {
-      baseCapInitial = 1.15;
-      baseCapMax = 1.2;
+      // Typical phones: improved starting sharpness
+      baseCapInitial = 1.35;
+      baseCapMax = 1.5;
     }
   }
   else if (isTablet){ category='tablet'; baseCapInitial = 1.25; baseCapMax = 1.3; }
@@ -1117,8 +1151,8 @@ function detectDeviceProfile(){
 const __deviceProfile = detectDeviceProfile();
 
 // Quantized DPR buckets (multipliers applied to baseCap) – descending order
-// Removed the lowest bucket to avoid overly soft image on phones
-const DPR_BUCKETS = [1.0, 0.9, 0.8, 0.7];
+// Keep buckets relatively high to avoid overly soft image on phones
+const DPR_BUCKETS = [1.0, 0.9, 0.8];
 let _dprBucketIndex = 0; // start at full quality of current baseCapCurrent
 
 // Effect quality tiers prioritizing subtle internal resolution drops before DPR buckets
@@ -1498,7 +1532,7 @@ function updateOrthoFrustum(cam, aspect) {
     const isPhonePortrait = vw < 450;
     if (isPhonePortrait) {
       // Phones (portrait): zoom out a bit more and nudge scene up
-      size = frustumSize * 1.6;
+      size = frustumSize * 1.52; // Decrease multiplier to increase zoom
       heightOffset = frustumHeight - 11; // move scene up
     } else {
       // Tablets (portrait): zoom out a bit, keep height offset as-is
