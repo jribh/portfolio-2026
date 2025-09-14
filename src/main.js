@@ -1081,10 +1081,23 @@ function detectDeviceProfile(){
   const isAppleSilicon = isMac && /apple/.test(navigator.vendor || '') && ('gpu' in navigator || /arm|apple/.test(ua));
   const isM1AirLike = isAppleSilicon && (window.devicePixelRatio||1) >= 2 && Math.max(screen.width, screen.height) <= 2560;
   const largeDisplay = Math.max(screen.width || 0, screen.height || 0) >= 2560;
+  const cores = navigator.hardwareConcurrency || 0;
+  const dpr = window.devicePixelRatio || 1;
+  const isIPhone = /iphone/.test(ua);
+  const isHighEndPhone = isMobile && ((isIPhone && cores >= 6) || (cores >= 8 && dpr >= 3));
   let category = 'desktop';
   let baseCapInitial = MAX_EFFECTIVE_DPR;
   let baseCapMax = MAX_EFFECTIVE_DPR;
-  if (isMobile){ category='phone'; baseCapInitial = 1.15; baseCapMax = 1.2; }
+  if (isMobile){
+    category='phone';
+    if (isHighEndPhone){
+      baseCapInitial = 1.35; // sharper start for iPhone Pro / flagship Android
+      baseCapMax = 1.5;      // modest headroom; runtime scaler still governs
+    } else {
+      baseCapInitial = 1.15;
+      baseCapMax = 1.2;
+    }
+  }
   else if (isTablet){ category='tablet'; baseCapInitial = 1.25; baseCapMax = 1.3; }
   else if (isM1AirLike){ category='fanless'; baseCapInitial = 1.25; baseCapMax = 1.35; }
   else { // desktop
