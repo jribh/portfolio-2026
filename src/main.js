@@ -1514,7 +1514,7 @@ function updateOrthoFrustum(cam, aspect) {
     if (isPhonePortrait) {
       // Phones (portrait): zoom out a bit more and nudge scene up
       size = frustumSize * 1.5; // Decrease multiplier to increase zoom
-      heightOffset = frustumHeight - 8; // Subtract with higher number to move scene up
+      heightOffset = frustumHeight - 6.5; // Subtract with higher number to move scene up
     } else {
       // Tablets (portrait): zoom out a bit, keep height offset as-is
       size = frustumSize * 1.4;
