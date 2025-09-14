@@ -40,158 +40,6 @@ function isPhoneWidth() {
   } catch { return false; }
 }
 
-// Gyro-based head look state (touch devices)
-let gyroControlActive = false;                     // true once user unlocks and events stream
-let deviceOrientationPermissionGranted = false;    // iOS-style permission granted flag
-let deviceOrientationListener = null;              // current bound listener
-let baselineOrientation = { beta: null, gamma: null, alpha: null }; // calibration at unlock
-let _gyroBtn = null;                               // reference to unlock button element
-
-function _createGyroUnlockButton() {
-  if (!IS_TOUCH_DEVICE || _gyroBtn) return;
-  const btn = document.createElement('button');
-  btn.id = 'gyro-unlock-btn';
-  btn.setAttribute('type', 'button');
-  btn.setAttribute('aria-label', 'Unlock motion control');
-  btn.innerHTML = `
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-      <path fill="currentColor" d="M12 1a3 3 0 0 0-3 3v2h2V4a1 1 0 1 1 2 0v2h2V4a3 3 0 0 0-3-3Zm7.07 5.93-1.41 1.41A7.97 7.97 0 0 1 20 12c0 4.42-3.58 8-8 8a7.97 7.97 0 0 1-3.66-.93l-1.41 1.41A9.97 9.97 0 0 0 12 22c5.52 0 10-4.48 10-10 0-2.2-.71-4.23-1.93-5.87ZM4 12c0-1.43.37-2.77 1.02-3.94l-1.5-1.5A9.96 9.96 0 0 0 2 12c0 2.2.71 4.23 1.93 5.87l1.41-1.41A7.97 7.97 0 0 1 4 12Zm8 1a1 1 0 0 0 0-2c-1.66 0-3-1.34-3-3H7a5 5 0 0 0 5 5Z"/>
-    </svg>
-    <span class="label">Move to look</span>
-  `;
-  // Bind both click and touchend to maximize iOS gesture detection
-  btn.addEventListener('click', _handleGyroUnlockClick, { passive: false });
-  btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); _handleGyroUnlockClick(e); }, { passive: false });
-  document.body.appendChild(btn);
-  _gyroBtn = btn;
-}
-
-function _handleGyroUnlockClick(evt) {
-  if (evt && typeof evt.preventDefault === 'function') evt.preventDefault();
-  // Prefer secure context (https or localhost); still attempt request even if not
-  const isLocalhost = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname || '');
-  if (!window.isSecureContext && !isLocalhost) {
-    _flashGyroMsg('Tip: Motion works best over HTTPS.');
-  }
-  // iOS 13+ needs explicit permission via user gesture – request within this handler
-  const hasOrientationReq = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
-  const hasMotionReq = typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function';
-  if (hasOrientationReq || hasMotionReq) {
-    let orientRes = 'granted';
-    let motionRes = 'granted';
-    const doEnable = () => {
-      deviceOrientationPermissionGranted = (orientRes === 'granted');
-      if (!deviceOrientationPermissionGranted) {
-        _flashGyroMsg('Motion permission was denied.');
-        return;
-      }
-      _enableGyroControl();
-    };
-    try {
-      const motionPromise = hasMotionReq ? DeviceMotionEvent.requestPermission() : Promise.resolve('granted');
-      motionPromise.catch(()=> 'denied').then((mr)=>{ motionRes = mr; });
-    } catch {}
-    try {
-      const orientPromise = hasOrientationReq ? DeviceOrientationEvent.requestPermission() : Promise.resolve('granted');
-      orientPromise.then((or)=>{ orientRes = or; doEnable(); }).catch(()=>{ orientRes = 'denied'; doEnable(); });
-    } catch {
-      _flashGyroMsg('Motion permission was denied.');
-    }
-  } else {
-    // Non‑iOS or older browsers – enable directly
-    deviceOrientationPermissionGranted = true;
-    _enableGyroControl();
-  }
-}
-
-// Request both orientation and motion permissions on iOS; return true if orientation is granted
-async function requestIOSMotionPermissions(){
-  // Non-iOS or old browsers
-  const hasOrientationReq = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
-  const hasMotionReq = typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function';
-  if (!hasOrientationReq && !hasMotionReq) return true; // not gated
-  // Try requesting both; some iOS versions gate orientation behind motion too
-  let orient = 'granted';
-  let motion = 'granted';
-  try { if (hasOrientationReq) orient = await DeviceOrientationEvent.requestPermission(); } catch {}
-  try { if (hasMotionReq) motion = await DeviceMotionEvent.requestPermission(); } catch {}
-  return orient === 'granted';
-}
-
-function _enableGyroControl(){
-  // Calibrate baseline on first event
-  baselineOrientation = { beta: null, gamma: null, alpha: null };
-  gyroControlActive = true;
-  allowHeadLook = true;
-  if (chin) startHeadLook();
-
-  // Hide button once active
-  if (_gyroBtn) {
-    _gyroBtn.classList.add('active');
-    _gyroBtn.style.display = 'none';
-  }
-
-  // Attach listeners once
-  if (!deviceOrientationListener) {
-    deviceOrientationListener = function (ev) {
-      const { alpha, beta, gamma } = ev || {};
-      if (typeof beta !== 'number' || typeof gamma !== 'number') return;
-      if (baselineOrientation.beta === null) {
-        baselineOrientation.beta = beta;
-        baselineOrientation.gamma = gamma;
-        baselineOrientation.alpha = alpha || 0;
-      }
-      _updateHeadLookFromGyro(alpha, beta, gamma);
-    };
-  }
-  window.addEventListener('deviceorientation', deviceOrientationListener, { passive: true });
-  // Some browsers emit deviceorientationabsolute; bind as fallback
-  window.addEventListener('deviceorientationabsolute', deviceOrientationListener, { passive: true });
-}
-
-function _flashGyroMsg(text) {
-  try {
-    const id = 'gyro-msg-toast';
-    let el = document.getElementById(id);
-    if (!el) {
-      el = document.createElement('div');
-      el.id = id;
-      el.className = 'gyro-toast';
-      document.body.appendChild(el);
-    }
-    el.textContent = text;
-    el.classList.add('show');
-    setTimeout(() => el.classList.remove('show'), 2600);
-  } catch {}
-}
-
-function _updateHeadLookFromGyro(alpha, beta, gamma) {
-  // Compute deltas from baseline to treat unlock orientation as neutral
-  const dBeta = (beta - (baselineOrientation.beta ?? 0));   // front/back tilt
-  const dGamma = (gamma - (baselineOrientation.gamma ?? 0)); // left/right tilt
-
-  // Clamp to reasonable range
-  const cb = THREE.MathUtils.clamp(dBeta, -45, 45);
-  const cg = THREE.MathUtils.clamp(dGamma, -45, 45);
-
-  // Normalize to [-1, 1]
-  const nb = cb / 30; // more sensitive vertically
-  const ng = cg / 30; // more sensitive horizontally
-
-  // Map to pseudo-cursor around center (fraction of viewport)
-  const cx = window.innerWidth / 2;
-  const cy = window.innerHeight / 2;
-  const rangeX = window.innerWidth * 0.35; // how far from center we steer
-  const rangeY = window.innerHeight * 0.25;
-
-  // In portrait, gamma (left/right) -> X, beta (front/back) -> Y (invert to feel natural)
-  const targetX = cx + THREE.MathUtils.clamp(ng, -1, 1) * rangeX;
-  const targetY = cy + THREE.MathUtils.clamp(-nb, -1, 1) * rangeY;
-
-  mousecoords = { x: targetX, y: targetY };
-  lastMouseMoveTime = Date.now(); // keep considered active while moving
-}
-
 const inactivityThreshold = 5000; // time before head moves back to position
 
 const WIND_BASE_TS = 1.0;
@@ -1057,7 +905,7 @@ function _headLookRAF() {
 
   if (typeof chin !== 'undefined' && chin) {
     // Choose head target: center if inactive/resizing, else cursor
-  const useCenter = ((IS_TOUCH_DEVICE && !gyroControlActive) || inactive || resizing);
+    const useCenter = IS_TOUCH_DEVICE || inactive || resizing;
     let targetCoords = useCenter ? { x: window.innerWidth / 2, y: window.innerHeight / 2 } : mousecoords;
 
     // Ease the first movement after startup
@@ -2156,8 +2004,6 @@ async function startStartupSequence(){
     allowHeadLook = false;
     // Keep head centered and run only breathing updates on touch devices
     startBreathingOnly();
-    // Show the unlock button for motion control on touch devices
-    _createGyroUnlockButton();
   }
   _shoulderStartMs = Date.now();
   _chinBreathActive = false;
