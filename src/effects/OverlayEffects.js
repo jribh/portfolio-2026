@@ -41,30 +41,6 @@ export const reededParams = {
   splitScreenBoundary: 0.5     // X position (0-1) where effect boundary occurs
 };
 
-// Phones-only tuning: halve refraction, frosting, and edge feather to reduce overall glass intensity on phones (not tablets)
-(function tuneReededForPhones(){
-  try {
-    const vw = window.visualViewport ? Math.floor(window.visualViewport.width) : window.innerWidth;
-    const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
-    const minSide = Math.min(vw || 0, vh || 0);
-    const ua = (navigator.userAgent || '').toLowerCase();
-    const coarse = !!(window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
-    const isPhoneUA = /mobi|iphone|android/.test(ua);
-    const isTabletUA = /ipad|tablet/.test(ua);
-    const isPhoneLike = (coarse || isPhoneUA) && !isTabletUA && (minSide > 0 && minSide <= 480);
-    if (isPhoneLike) {
-      // Reduce refraction range
-      reededParams.refractPxStop1 *= 0.5;
-      reededParams.refractPxStop2 *= 0.5;
-      // Reduce frosting intensity overall
-      reededParams.frostStop1 *= 0.5;
-      reededParams.frostStop2 *= 0.5;
-      // Halve edge feather width for tighter edges
-      reededParams.edgeFeatherPx *= 0.5;
-    }
-  } catch { /* no-op in non-browser contexts */ }
-})();
-
 // Convert responsive flute width to pixels for current canvas width
 function computeFluteWidthPx(params, canvasWidthPx){
   const w = Math.max(canvasWidthPx || 0, 1);

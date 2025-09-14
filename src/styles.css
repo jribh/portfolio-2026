@@ -1,4 +1,4 @@
-html, body {
+body {
     overflow-x: hidden !important;
     overflow-y: auto;
     margin:0;
@@ -8,9 +8,6 @@ html, body {
     scroll-behavior: smooth;
     scroll-snap-type: y mandatory;
     /* background: rgb(2,0,36); */
-    min-height: 100vh;   /* fallback */
-    min-height: 100dvh;  /* modern dynamic viewport height */
-    min-height: 100svh;  /* iOS stable viewport height (preferred) */
 }
 
 @media (max-width:600px) {
@@ -74,11 +71,21 @@ body::-webkit-scrollbar-thumb:active {
 #artboard {
     z-index:10;
     position:absolute;
-    top:0;
+        top:0;
     pointer-events: none;
     opacity: 0;                 /* ensure no initial pop before JS runs */
     transition: opacity 900ms cubic-bezier(.4,0,.2,1);
     will-change: opacity;
+}
+
+/* Phones: anchor artboard to bottom so added height extends upward */
+@media (max-width: 599.98px) {
+    #artboard { top: 0; bottom: auto; }
+}
+
+/* Tablets: anchor artboard to top so added height extends downward (top edge buffer) */
+@media (min-width: 600px) and (max-width: 1100px) {
+    #artboard { bottom: 0; top: auto; }
 }
 
 #backgrounds {
@@ -89,9 +96,7 @@ body::-webkit-scrollbar-thumb:active {
 
 #head-background{
     position: fixed; inset: 0; z-index: 2;
-    width: 100vw; height: 100vh; /* fallback */
-    height: 100dvh;              /* modern browsers */
-    height: 100svh;              /* prefer stable on iOS */
+    width: 100vw; height: 100vh;
     opacity: 0.75;
   
     /* animated vars (positions %, radii %) */
@@ -111,7 +116,7 @@ body::-webkit-scrollbar-thumb:active {
         /* Cyan TR */
         radial-gradient(circle at var(--g4x) var(--g4y), rgba(123, 226, 255, 0.04) 0%, transparent var(--g4r));
     
-    background-blend-mode: screen;
+        background-blend-mode: screen;
   }
 
 #content {
@@ -122,11 +127,7 @@ body::-webkit-scrollbar-thumb:active {
 }
 
 .content-section {
-    /* Use stable viewport height with fallbacks to avoid iOS Safari bottom gaps */
-    height: 100vh;     /* fallback */
-    height: 100dvh;    /* modern dynamic viewport height */
-    height: 100svh;    /* prefer stable viewport height on iOS */
-    min-height: 100vh; /* safety: never smaller than classic vh */
+    height: 100vh;
     padding: 4rem 2rem;
     display: flex;
     flex-direction: column;
@@ -164,16 +165,15 @@ body::-webkit-scrollbar-thumb:active {
     margin-bottom: 1rem;
 }
 
-/* Fixed 3D container should always cover the visible viewport on mobile/tablet.
-   Use new viewport units when available to avoid iOS Safari chrome jumps. */
 #head-container {
     position: fixed;
-    inset: 0; /* cover full viewport; more robust than width/height 100vh */
+    top: 0;
+    left: 0;
     width: 100vw;
-    height: 100vh;      /* fallback */
-    height: 100dvh;     /* dynamic viewport height in modern browsers */
-    height: 100svh;     /* stable small viewport height (prevents jumps) */
+    height: 100vh;
     z-index: 10;
     pointer-events: none;
 }
+
+/* Tablet headroom handled by artboard sizing + top anchoring */
   

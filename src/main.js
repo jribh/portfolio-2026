@@ -1520,16 +1520,19 @@ function updateOrthoFrustum(cam, aspect) {
   // Base values
   let size = frustumSize;
   let heightOffset = frustumHeight;
+  // no extra headroom padding
 
   // Orientation check
   const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
   const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
   const isPortrait = vh >= vw;
+  const isPhonePortrait = isPortrait && vw < 600;
+  const isTabletPortrait = isPortrait && vw >= 600 && vw <= 1100; // iPad range
+  const isTablet = vw >= 600 && vw <= 1100; // all orientations
 
   // Device-responsive tweaks
   if (isPortrait) {
-    // Breakpoints: Phones (portrait) if width < 450px, otherwise tablet
-    const isPhonePortrait = vw < 450;
+    // Phones vs Tablets
     if (isPhonePortrait) {
       // Phones (portrait): zoom out a bit more and nudge scene up
       size = frustumSize * 1.52; // Decrease multiplier to increase zoom
@@ -1538,7 +1541,14 @@ function updateOrthoFrustum(cam, aspect) {
       // Tablets (portrait): zoom out a bit, keep height offset as-is
       size = frustumSize * 1.4;
       heightOffset = frustumHeight;
+    // No extra headroom on tablets
     }
+  }
+
+  // Shift scene slightly downward on tablets to counter added top headroom in CSS
+  // Positive offset moves the frustum up in world space, placing content lower on screen.
+  if (isTablet) {
+    heightOffset = heightOffset + 1.0; // tune as needed
   }
 
   cam.left   = -size * aspect / 2;
@@ -1574,11 +1584,12 @@ function handleResize() {
     const vw = window.visualViewport ? Math.floor(window.visualViewport.width)  : window.innerWidth;
     const vh = window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
 
-  // Oversize canvas height on portrait devices to buffer iOS chrome show/hide
+  // Oversize canvas to buffer UI chrome changes
   const isPortrait = vh >= vw;
-  const isPhonePortrait = isPortrait && vw < 500;
-  const isTabletPortrait = isPortrait && vw >= 500 && vw <= 1100; // iPad range
-  const cssH = isPhonePortrait ? Math.floor(vh * 1.15) : (isTabletPortrait ? Math.floor(vh * 1.08) : vh);
+  const isPhone = vw < 600;
+  const isTablet = vw >= 600 && vw <= 1100;
+  // Phones: grow downward (anchored top in CSS). Tablets: grow upward (anchored bottom in CSS).
+  const cssH = isPhone ? Math.floor(vh * 1.15) : (isTablet ? Math.floor(vh * 1.08) : vh);
 
     if (theCanvas) setCanvasCSSSize(theCanvas, vw, cssH);
 
@@ -1596,11 +1607,8 @@ function handleResize() {
 }
 
 if (IS_TOUCH_DEVICE) {
-  // On touch devices: handle orientation and visual viewport changes (iOS Safari UI chrome)
+  // On touch devices: only handle orientation changes (avoid frequent viewport-height jitter resizes)
   window.addEventListener('orientationchange', handleResize, { passive: true });
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', handleResize, { passive: true });
-  }
 } else {
   // On non-touch: respond to full resize and visualViewport changes
   window.addEventListener('resize', handleResize, { passive: true });
@@ -1674,16 +1682,9 @@ function getGlassModeForProgress(scrollProgress) {
 }
 
 // Initialize effects based on current scroll position (for page reloads)
-function _getSectionCSSHeight(){
-  // Prefer measuring a section element to account for svh/dvh and our buffers
-  const sec = document.querySelector('.content-section');
-  if (sec) return sec.getBoundingClientRect().height;
-  return window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight;
-}
-
 function initializeScrollEffectsFromCurrentPosition() {
   const scrollY = window.scrollY;
-  const sectionHeight = _getSectionCSSHeight();
+  const sectionHeight = window.innerHeight;
   const totalSections = 3; // Now we have 3 sections
   const scrollProgress = Math.min(scrollY / (sectionHeight * (totalSections - 1)), 1.0); // Normalize to 0-1 across all sections
   
@@ -1730,8 +1731,7 @@ function updateReededGlassProgress(progress) {
 }
 
 function snapToSection(sectionIndex) {
-  const sectionHeight = _getSectionCSSHeight();
-  const targetY = sectionIndex * sectionHeight;
+  const targetY = sectionIndex * window.innerHeight;
   const totalSections = 3;
   const targetProgress = sectionIndex / (totalSections - 1); // Normalize to 0-1 across all sections
   // Exposure will be driven by handleScroll() as the window scrolls; avoid conflicting tweens here
@@ -1775,7 +1775,7 @@ function handleScroll() {
   if (isScrolling) return;
   
   const scrollY = window.scrollY;
-  const sectionHeight = _getSectionCSSHeight();
+  const sectionHeight = window.innerHeight;
   const totalSections = 3;
   const scrollProgress = Math.min(scrollY / (sectionHeight * (totalSections - 1)), 1.0); // Normalize to 0-1 across all sections
   
